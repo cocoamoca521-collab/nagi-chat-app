@@ -606,8 +606,10 @@ function NagiChat() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const endRef = useRef(null);
   const inputRef = useRef(null);
+  const chatAreaRef = useRef(null);
   const fileRef = useRef(null);
   const [attachedImages, setAttachedImages] = useState([]);
 
@@ -658,6 +660,17 @@ function NagiChat() {
   useEffect(() => { if (initialized) sSet(SK.chars, characters); }, [characters, initialized]);
   useEffect(() => { if (initialized) sSet(SK.profile, userProfile); }, [userProfile, initialized]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [conversations, loading]);
+
+  function handleChatScroll() {
+    const el = chatAreaRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBtn(distFromBottom > 150);
+  }
+
+  function scrollToBottom() {
+    endRef.current?.scrollIntoView({ behavior:"smooth" });
+  }
 
   function updateConv(updater) { setConversations(prev => prev.map(c => c.id===activeConvId ? {...updater(c), updatedAt:Date.now()} : c)); }
 
@@ -966,7 +979,7 @@ function NagiChat() {
       </div>
 
       {/* Messages */}
-      <div style={{ flex:1,overflowY:"auto",padding:"20px 14px" }}>
+      <div ref={chatAreaRef} onScroll={handleChatScroll} style={{ flex:1,overflowY:"auto",padding:"20px 14px",position:"relative" }}>
         {messages.length===0 && (
           <div style={{ textAlign:"center",padding:"60px 20px",animation:"fadeIn 0.4s ease-out" }}>
             <div style={{ marginBottom:"16px" }}><Avatar src={activeChar.avatar} size={72} border={`3px solid ${theme.accent}40`} /></div>
@@ -977,6 +990,18 @@ function NagiChat() {
         {loading && !(messages.some(m => m._streaming && m.content)) && <TypingIndicator avatar={activeChar.avatar} name={activeChar.name} theme={theme} />}
         <div ref={endRef} />
       </div>
+      {/* Scroll to bottom button */}
+      {showScrollBtn && (
+        <button onClick={scrollToBottom} style={{
+          position:"absolute", bottom:"90px", right:"16px", zIndex:30,
+          width:"44px", height:"44px", borderRadius:"50%", border:"none",
+          background:theme.userGradient, color:"#fff",
+          boxShadow:`0 4px 16px ${theme.userShadow}`,
+          cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center",
+          animation:"fadeIn 0.2s ease-out", transition:"all 0.2s",
+          fontSize:"18px",
+        }}>↓</button>
+      )}
 
       {/* Input Area */}
       <div style={{ padding:"8px 12px max(16px, env(safe-area-inset-bottom))",borderTop:`1px solid ${theme.accent}10`,background:theme.inputBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
