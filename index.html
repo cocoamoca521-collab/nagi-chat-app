@@ -921,11 +921,12 @@ function NagiChat() {
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
-  function handleExport(convId) {
+  async function handleExport(convId) {
     const conv = conversations.find(c => c.id === convId);
     if (!conv || !conv.messages?.length) return;
     const charName = conv.charName || conv.charIcon || "会話";
     const date = new Date(conv.createdAt).toLocaleDateString("ja-JP");
+    const fileName = charName + "_" + date.split("/").join("-") + ".txt";
     let text = charName + "との会話 — " + date + "\n========================================\n\n";
     conv.messages.forEach(function(m) {
       const time = new Date(m.timestamp).toLocaleTimeString("ja-JP", { hour:"2-digit", minute:"2-digit" });
@@ -937,10 +938,24 @@ function NagiChat() {
     });
     const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
     const blob = new Blob([bom, text], { type:"text/plain;charset=utf-8" });
+    const file = new File([blob], fileName, { type:"text/plain;charset=utf-8" });
+
+    // Web Share API（スマホの共有メニュー）に対応していれば使う
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ title: charName + "との会話", files: [file] });
+        return;
+      } catch (err) {
+        if (err.name === "AbortError") return; // ユーザーがキャンセルした
+        // 共有失敗時はダウンロードにフォールバック
+      }
+    }
+
+    // フォールバック：従来のダウンロード
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = charName + "_" + date.split("/").join("-") + ".txt";
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
