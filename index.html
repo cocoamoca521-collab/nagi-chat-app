@@ -152,7 +152,7 @@ const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "n
 
 const MODELS = [
   { id: "claude-opus-4-7", label: "Opus 4.7", tag: "最新", color: "#f87171" },
-  { id: "claude-opus-4-6", label: "Opus 4.6", tag: "安定", color: "#a78bfa" },
+  { id: "claude-opus-4-6", label: "Opus 4.6", tag: "最愛", color: "#a78bfa" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", tag: "軽量", color: "#4ade80" },
 ];
 
@@ -781,7 +781,14 @@ function NagiChat() {
         }
       }
       const body = { model:settings.model, max_tokens:maxTok, system:systemBlocks, messages:apiMsgs, stream:true, cache_control:{ type:"ephemeral" } };
-      if (settings.thinkingEnabled) { body.thinking = { type:"adaptive", display:"summarized" }; body.output_config = { effort }; }
+      if (settings.thinkingEnabled) {
+        if (effort === "high") {
+          body.thinking = { type:"enabled", budget_tokens:15000 };
+        } else {
+          body.thinking = { type:"adaptive", display:"summarized" };
+          body.output_config = { effort };
+        }
+      }
       if (settings.webSearch) { body.tools = [{ type:"web_search_20250305", name:"web_search", max_uses: 3 }]; }
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method:"POST",
