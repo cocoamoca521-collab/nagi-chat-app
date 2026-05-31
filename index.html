@@ -801,9 +801,10 @@ function NagiChat() {
       const allMsgs = [...messages, userMsg];
 
       // ── 【B】ローリング要約 ──
-      // ターン数を数える（user+assistantのペアで1ターン）
       let turnCount = 0;
       for (const m of allMsgs) { if (m.role === "user") turnCount++; }
+      const hasApiContent = allMsgs.filter(m => m.role === "assistant" && m.apiContent).length;
+      console.log("[DEBUG] turnCount=" + turnCount + ", totalMsgs=" + allMsgs.length + ", msgsWithApiContent=" + hasApiContent + ", threshold=" + ROLLING_KEEP_TURNS);
 
       let summaryText = "";
       let recentMsgs = allMsgs;
