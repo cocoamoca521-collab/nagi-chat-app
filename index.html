@@ -740,6 +740,57 @@ function NagiChat() {
 
   function removeImage(idx) { setAttachedImages(prev => prev.filter((_, i) => i !== idx)); }
 
+  // ── ローリング要約生成 ──
+  const ROLLING_KEEP_TURNS = 8; // 直近8ターン（16メッセージ）を生で保持
+
+  async function generateSummary(oldMessages, apiKey) {
+    // 古いメッセージからテキストだけ抽出
+    let transcript = "";
+    for (const m of oldMessages) {
+      const name = m.role === "user" ? "ユーザー" : "キャラ";
+      const text = m.content || "";
+      if (text) transcript += name + ": " + text + "\n";
+    }
+    if (!transcript.trim()) return "";
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        system: "これは恋愛ロールプレイ会話の履歴です。キャラの口調・関係性・重要な出来事・感情の流れを失わないよう、簡潔に日本語で要約してください。箇条書きでなく地の文で。",
+        messages: [{ role:"user", content:"以下の会話履歴を要約してください:\n\n" + transcript }],
+      }),
+    });
+    if (!res.ok) { console.warn("[SUMMARY] Failed:", res.status); return ""; }
+    const data = await res.json();
+    const textBlock = (data.content || []).find(b => b.type === "text");
+    return textBlock?.text || "";
+  }
+
+  // ── thinking剥がしヘルパー ──
+  function shouldPreserveApiContent(m, idx, allMsgs) {
+    if (!m.apiContent) return false;
+    // 1. Web検索ターン: server_tool_use / web_search_tool_result を含む
+    const hasWebSearch = m.apiContent.some(b => b.type === "server_tool_use" || b.type === "web_search_tool_result");
+    if (hasWebSearch) return true;
+    // 2. 画像ターン: 直前のuserに画像がある、またはassistant自身が画像ブロックを持つ
+    const prevUser = idx > 0 ? allMsgs[idx - 1] : null;
+    if (prevUser && prevUser.role === "user" && prevUser.images?.length > 0) return true;
+    if (m.apiContent.some(b => b.type === "image")) return true;
+    // 3. 最新のassistantメッセージ
+    for (let i = allMsgs.length - 1; i >= 0; i--) {
+      if (allMsgs[i].role === "assistant") return i === idx;
+    }
+    return false;
+  }
+
+  function stripThinkingFromContent(apiContent, fallbackText) {
+    const stripped = apiContent.filter(b => b.type !== "thinking");
+    if (stripped.length === 0) return fallbackText || "…";
+    return stripped;
+  }
+
   async function handleSend() {
     if ((!input.trim() && attachedImages.length === 0) || loading || !settings.apiKey) return;
     const msgImages = attachedImages.map(img => ({ base64: img.base64, type: img.type, preview: img.preview }));
@@ -747,8 +798,62 @@ function NagiChat() {
     updateConv(c => ({...c, messages:[...c.messages, userMsg]}));
     setInput(""); setAttachedImages([]); setLoading(true);
     try {
-      const apiMsgs = [...messages, userMsg].map(m => {
-        if (m.role==="assistant" && m.apiContent) return { role:"assistant", content:m.apiContent };
+      const allMsgs = [...messages, userMsg];
+
+      // ── 【B】ローリング要約 ──
+      // ターン数を数える（user+assistantのペアで1ターン）
+      let turnCount = 0;
+      for (const m of allMsgs) { if (m.role === "user") turnCount++; }
+
+      let summaryText = "";
+      let recentMsgs = allMsgs;
+      const currentConv = conversations.find(c => c.id === activeConvId);
+
+      if (turnCount > ROLLING_KEEP_TURNS) {
+        // 直近N個のuserメッセージの位置を見つけて、そこから保持
+        let keepFrom = allMsgs.length;
+        let userCount = 0;
+        for (let i = allMsgs.length - 1; i >= 0; i--) {
+          if (allMsgs[i].role === "user") {
+            userCount++;
+            if (userCount >= ROLLING_KEEP_TURNS) { keepFrom = i; break; }
+          }
+        }
+
+        const oldMsgs = allMsgs.slice(0, keepFrom);
+        recentMsgs = allMsgs.slice(keepFrom);
+
+        // キャッシュチェック: 要約済みインデックスと比較
+        const cachedSummaryIdx = currentConv?.summaryUpTo || 0;
+        if (cachedSummaryIdx >= keepFrom && currentConv?.summary) {
+          // キャッシュが有効
+          summaryText = currentConv.summary;
+          console.log("[SUMMARY] Using cached summary (up to index " + cachedSummaryIdx + ")");
+        } else if (oldMsgs.length > 0) {
+          // 新たに要約生成
+          console.log("[SUMMARY] Generating summary for " + oldMsgs.length + " old messages...");
+          summaryText = await generateSummary(oldMsgs, settings.apiKey);
+          if (summaryText) {
+            // 要約をconvにキャッシュ
+            updateConv(c => ({ ...c, summary: summaryText, summaryUpTo: keepFrom }));
+            console.log("[SUMMARY] Cached summary (up to index " + keepFrom + ")");
+          }
+        }
+      }
+
+      // ── 【A】apiMsgs構築 + thinking剥がし ──
+      const apiMsgs = recentMsgs.map((m, idx) => {
+        if (m.role === "assistant" && m.apiContent) {
+          if (shouldPreserveApiContent(m, idx, recentMsgs)) {
+            // 温存: Web検索・画像・最新ターン
+            return { role: "assistant", content: m.apiContent };
+          } else {
+            // thinkingを剥がす
+            const stripped = stripThinkingFromContent(m.apiContent, m.content);
+            console.log("[THINKING STRIP] Stripped thinking from turn at index " + idx);
+            return { role: "assistant", content: stripped };
+          }
+        }
         if (m.role==="user" && m.images?.length > 0) {
           const blocks = [];
           m.images.forEach(img => {
@@ -760,13 +865,20 @@ function NagiChat() {
         }
         return { role:m.role, content:m.content || "…" };
       });
+
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
       const is47 = settings.model === "claude-opus-4-7";
       const maxTok = (is47 && settings.thinkingEnabled && isHighEffort) ? 64000 : 16000;
       let effort = settings.effort;
       if (effort === "xhigh" && !is47) effort = "max";
+
+      // ── systemBlocks構築（要約があれば追記）──
+      let systemText = activeChar.prompt + "\n\n" + userProfile;
+      if (summaryText) {
+        systemText += "\n\n## これまでのあらすじ\n" + summaryText;
+      }
       const systemBlocks = [
-        { type:"text", text:activeChar.prompt + "\n\n" + userProfile, cache_control:{ type:"ephemeral" } }
+        { type:"text", text:systemText, cache_control:{ type:"ephemeral" } }
       ];
       if (apiMsgs.length > 1) {
         const lastHistoryIdx = apiMsgs.length - 2;
