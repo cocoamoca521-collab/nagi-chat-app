@@ -810,39 +810,42 @@ function NagiChat() {
 
       if (turnCount > ROLLING_KEEP_TURNS) {
         // 直近N個のuserメッセージの位置を見つけて、そこから保持
-        let keepFrom = allMsgs.length;
+        // 理想の分割位置を計算（直近8ターン分のuserから保持）
+        let idealKeepFrom = allMsgs.length;
         let userCount = 0;
         for (let i = allMsgs.length - 1; i >= 0; i--) {
           if (allMsgs[i].role === "user") {
             userCount++;
-            if (userCount >= ROLLING_KEEP_TURNS) { keepFrom = i; break; }
+            if (userCount >= ROLLING_KEEP_TURNS) { idealKeepFrom = i; break; }
           }
         }
 
-        const oldMsgs = allMsgs.slice(0, keepFrom);
-        recentMsgs = allMsgs.slice(keepFrom);
-
         const cachedSummaryIdx = currentConv?.summaryUpTo || 0;
-        // 未要約メッセージ数（大まかにターン換算）
-        const newUnsummarized = keepFrom - cachedSummaryIdx;
+        const newUnsummarized = idealKeepFrom - cachedSummaryIdx;
         const REGEN_THRESHOLD = 8; // 8メッセージ（≈4ターン）溜まったら再要約
 
         if (currentConv?.summary && newUnsummarized < REGEN_THRESHOLD) {
-          // キャッシュ要約を使い回す（systemプロンプトを安定させてキャッシュヒットを維持）
+          // ── キャッシュ使い回し ──
+          // 要約テキストもsplit位置も固定 → system・メッセージ配列の先頭が安定 → キャッシュヒット
           summaryText = currentConv.summary;
-          console.log("[SUMMARY] Reusing cached summary (unsummarized=" + newUnsummarized + ", threshold=" + REGEN_THRESHOLD + ")");
-        } else if (oldMsgs.length > 0) {
-          // 初回 or 溜まりすぎ → 再要約
-          console.log("[SUMMARY] Generating summary for " + oldMsgs.length + " msgs (unsummarized=" + newUnsummarized + ")");
-          const newSummary = await generateSummary(oldMsgs, settings.apiKey);
-          if (newSummary) {
-            summaryText = newSummary;
-            updateConv(c => ({ ...c, summary: newSummary, summaryUpTo: keepFrom }));
-            console.log("[SUMMARY] Cached new summary (up to index " + keepFrom + ")");
-          } else if (currentConv?.summary) {
-            // Haiku呼び出し失敗 → 古い要約をフォールバック
-            summaryText = currentConv.summary;
-            console.warn("[SUMMARY] Generation failed, using stale cache");
+          recentMsgs = allMsgs.slice(cachedSummaryIdx);
+          console.log("[SUMMARY] Reusing cached summary + fixed split at " + cachedSummaryIdx + " (unsummarized=" + newUnsummarized + ")");
+        } else {
+          // ── 初回 or 閾値超え → 再要約 ──
+          const oldMsgs = allMsgs.slice(0, idealKeepFrom);
+          recentMsgs = allMsgs.slice(idealKeepFrom);
+          if (oldMsgs.length > 0) {
+            console.log("[SUMMARY] Generating summary for " + oldMsgs.length + " msgs (unsummarized=" + newUnsummarized + ")");
+            const newSummary = await generateSummary(oldMsgs, settings.apiKey);
+            if (newSummary) {
+              summaryText = newSummary;
+              updateConv(c => ({ ...c, summary: newSummary, summaryUpTo: idealKeepFrom }));
+              console.log("[SUMMARY] Cached new summary (up to index " + idealKeepFrom + ")");
+            } else if (currentConv?.summary) {
+              summaryText = currentConv.summary;
+              recentMsgs = allMsgs.slice(cachedSummaryIdx);
+              console.warn("[SUMMARY] Generation failed, falling back to stale cache");
+            }
           }
         }
       }
