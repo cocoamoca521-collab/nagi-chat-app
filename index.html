@@ -769,6 +769,8 @@ function NagiChat() {
   }
 
   // ── thinking剥がしヘルパー ──
+  // ※最新assistantの温存はキャッシュを壊すため廃止。
+  //   Web検索・画像ターンのみ構造を温存（API互換性のため）。
   function shouldPreserveApiContent(m, idx, allMsgs) {
     if (!m.apiContent) return false;
     // 1. Web検索ターン: server_tool_use / web_search_tool_result を含む
@@ -778,10 +780,6 @@ function NagiChat() {
     const prevUser = idx > 0 ? allMsgs[idx - 1] : null;
     if (prevUser && prevUser.role === "user" && prevUser.images?.length > 0) return true;
     if (m.apiContent.some(b => b.type === "image")) return true;
-    // 3. 最新のassistantメッセージ
-    for (let i = allMsgs.length - 1; i >= 0; i--) {
-      if (allMsgs[i].role === "assistant") return i === idx;
-    }
     return false;
   }
 
@@ -824,20 +822,27 @@ function NagiChat() {
         const oldMsgs = allMsgs.slice(0, keepFrom);
         recentMsgs = allMsgs.slice(keepFrom);
 
-        // キャッシュチェック: 要約済みインデックスと比較
         const cachedSummaryIdx = currentConv?.summaryUpTo || 0;
-        if (cachedSummaryIdx >= keepFrom && currentConv?.summary) {
-          // キャッシュが有効
+        // 未要約メッセージ数（大まかにターン換算）
+        const newUnsummarized = keepFrom - cachedSummaryIdx;
+        const REGEN_THRESHOLD = 8; // 8メッセージ（≈4ターン）溜まったら再要約
+
+        if (currentConv?.summary && newUnsummarized < REGEN_THRESHOLD) {
+          // キャッシュ要約を使い回す（systemプロンプトを安定させてキャッシュヒットを維持）
           summaryText = currentConv.summary;
-          console.log("[SUMMARY] Using cached summary (up to index " + cachedSummaryIdx + ")");
+          console.log("[SUMMARY] Reusing cached summary (unsummarized=" + newUnsummarized + ", threshold=" + REGEN_THRESHOLD + ")");
         } else if (oldMsgs.length > 0) {
-          // 新たに要約生成
-          console.log("[SUMMARY] Generating summary for " + oldMsgs.length + " old messages...");
-          summaryText = await generateSummary(oldMsgs, settings.apiKey);
-          if (summaryText) {
-            // 要約をconvにキャッシュ
-            updateConv(c => ({ ...c, summary: summaryText, summaryUpTo: keepFrom }));
-            console.log("[SUMMARY] Cached summary (up to index " + keepFrom + ")");
+          // 初回 or 溜まりすぎ → 再要約
+          console.log("[SUMMARY] Generating summary for " + oldMsgs.length + " msgs (unsummarized=" + newUnsummarized + ")");
+          const newSummary = await generateSummary(oldMsgs, settings.apiKey);
+          if (newSummary) {
+            summaryText = newSummary;
+            updateConv(c => ({ ...c, summary: newSummary, summaryUpTo: keepFrom }));
+            console.log("[SUMMARY] Cached new summary (up to index " + keepFrom + ")");
+          } else if (currentConv?.summary) {
+            // Haiku呼び出し失敗 → 古い要約をフォールバック
+            summaryText = currentConv.summary;
+            console.warn("[SUMMARY] Generation failed, using stale cache");
           }
         }
       }
