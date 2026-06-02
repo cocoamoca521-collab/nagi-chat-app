@@ -790,7 +790,7 @@ function NagiChat() {
   function removeImage(idx) { setAttachedImages(prev => prev.filter((_, i) => i !== idx)); }
 
   // ── 要約生成（共通ヘルパー）──
-  const ROLLING_KEEP_TURNS = 8;
+  const ROLLING_KEEP_TURNS = 25;
 
   async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens) {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
