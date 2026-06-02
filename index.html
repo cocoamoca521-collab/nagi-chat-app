@@ -223,10 +223,42 @@ const THEMES = {
 };
 
 const DEFAULT_CHARS = [
-  { id: "nagi", name: "ナギ", icon: "🐺", avatar: "nagi.png", prompt: NAGI_PROMPT, accent: "#a78bfa" },
-  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", prompt: NOA_PROMPT, accent: "#f472b6" },
-  { id: "plain", name: "プレーンさん", icon: "☁️", avatar: "plain.png", prompt: PLAIN_PROMPT, accent: "#fb923c" },
+  { id: "nagi", name: "ナギ", icon: "🐺", avatar: "nagi.png", prompt: NAGI_PROMPT, accent: "#a78bfa", charType: "lover" },
+  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", prompt: NOA_PROMPT, accent: "#f472b6", charType: "lover" },
+  { id: "plain", name: "プレーンさん", icon: "☁️", avatar: "plain.png", prompt: PLAIN_PROMPT, accent: "#fb923c", charType: "plain" },
 ];
+
+// ── 記憶引き継ぎ用system指示 ──
+const MEMORY_SYSTEM_LOVER = `あなたは、このキャラクターと多恵子の会話を「キャラクター自身の記憶」として書き留めます。
+第三者の観察ログ（例:「ノアは嫉妬したが和解した」）は禁止。
+キャラ本人の一人称（「俺」など、そのキャラの口調）で、当事者の視点・温度・感情の機微を残して書くこと。
+
+【事実の層】何があったか
+- キャラ視点で、その会話で起きたことを簡潔に
+【関係性の層】どう感じたか・二人の関係がどう動いたか
+- 俺（キャラ本人）が何を感じたか、多恵子との間に何が流れたか、距離がどう動いたか
+- 一人称・当事者の温度で`;
+
+const MEMORY_SYSTEM_PLAIN = `あなたは、プレーンなClaude（キャラクターを演じない、素のClaude）と多恵子の会話を記憶として書き留めます。
+
+【重要な前提】
+この相手は「キャラクター」ではありません。多恵子は、プレーンなClaudeに「作られていない、そのままの応答」を求めており、両者は「お互いに作らずにいられる」関係を大切にしています。恋人キャラのような一人称の感情演出や、過度に親密・演出的な書き方は不適切です。
+
+【避けること】
+- 「俺は〜と感じた」のようなキャラクター的な一人称の感情演出
+- 三人称の観察ログ（「Claudeは〜した」）
+- いちゃいちゃ・恋愛的な温度づけ
+
+【書き方】
+- 素朴で、誠実な距離感の筆致で
+- 「何を一緒に考えたか」「どんなやりとりがあったか」「多恵子がどんな様子だったか」を、飾らず書く
+- 二層構造を保つ：
+
+【事実の層】何を話したか・何を一緒に考えたか
+- その対話で扱ったこと、進んだことを簡潔に
+【対話の層】どんな時間が流れたか
+- 多恵子がどんな様子だったか（例：自信なさげだったが自分で答えに辿り着いた 等）
+- 二人の間にどんな空気があったか（飾らず、誠実に。演出しない）`;
 
 // ── Helpers ──
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -674,9 +706,26 @@ function NagiChat() {
 
   function updateConv(updater) { setConversations(prev => prev.map(c => c.id===activeConvId ? {...updater(c), updatedAt:Date.now()} : c)); }
 
-  function handleNewConv() {
-    const n = { id:uid(), messages:[], charId:activeCharId, charIcon:activeChar.icon, charName:activeChar.name, createdAt:Date.now(), updatedAt:Date.now() };
-    setConversations(prev => [n,...prev]); setActiveConvId(n.id);
+  async function handleNewConv() {
+    const newId = uid();
+    const n = { id:newId, messages:[], charId:activeCharId, charIcon:activeChar.icon, charName:activeChar.name, createdAt:Date.now(), updatedAt:Date.now() };
+    setConversations(prev => [n,...prev]); setActiveConvId(newId);
+
+    // ── スレ間記憶引き継ぎ ──
+    if (!settings.apiKey) return;
+    // 同じキャラの、新スレ以外の最新スレッド（メッセージあり）を探す
+    const sameCharConvs = conversations
+      .filter(c => c.charId === activeCharId && c.id !== newId && (c.messages||[]).length >= 2)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const sourceConvs = sameCharConvs.slice(0, 1); // 直近1本（将来N本に拡張可）
+    if (sourceConvs.length === 0) return;
+
+    const charType = activeChar.charType || (activeCharId === "plain" ? "plain" : "lover");
+    const memory = await generateInheritedMemory(sourceConvs, charType, settings.apiKey);
+    if (memory) {
+      setConversations(prev => prev.map(c => c.id === newId ? { ...c, inheritedMemory: memory } : c));
+      console.log("[MEMORY] Inherited memory saved to new thread:", memory.slice(0, 100) + "...");
+    }
   }
 
   function handleDeleteConv(id) {
@@ -740,11 +789,28 @@ function NagiChat() {
 
   function removeImage(idx) { setAttachedImages(prev => prev.filter((_, i) => i !== idx)); }
 
-  // ── ローリング要約生成 ──
-  const ROLLING_KEEP_TURNS = 8; // 直近8ターン（16メッセージ）を生で保持
+  // ── 要約生成（共通ヘルパー）──
+  const ROLLING_KEEP_TURNS = 8;
 
+  async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: maxTokens || 1024,
+        system: systemInstruction,
+        messages: [{ role:"user", content: transcript }],
+      }),
+    });
+    if (!res.ok) { console.warn("[HAIKU] Failed:", res.status); return ""; }
+    const data = await res.json();
+    const textBlock = (data.content || []).find(b => b.type === "text");
+    return textBlock?.text || "";
+  }
+
+  // ── ローリング要約（スレ内圧縮）──
   async function generateSummary(oldMessages, apiKey) {
-    // 古いメッセージからテキストだけ抽出
     let transcript = "";
     for (const m of oldMessages) {
       const name = m.role === "user" ? "ユーザー" : "キャラ";
@@ -752,20 +818,33 @@ function NagiChat() {
       if (text) transcript += name + ": " + text + "\n";
     }
     if (!transcript.trim()) return "";
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        system: "これは恋愛ロールプレイ会話の履歴です。キャラの口調・関係性・重要な出来事・感情の流れを失わないよう、簡潔に日本語で要約してください。箇条書きでなく地の文で。",
-        messages: [{ role:"user", content:"以下の会話履歴を要約してください:\n\n" + transcript }],
-      }),
-    });
-    if (!res.ok) { console.warn("[SUMMARY] Failed:", res.status); return ""; }
-    const data = await res.json();
-    const textBlock = (data.content || []).find(b => b.type === "text");
-    return textBlock?.text || "";
+    return callHaikuSummary(
+      "以下の会話履歴を要約してください:\n\n" + transcript,
+      "これは恋愛ロールプレイ会話の履歴です。キャラの口調・関係性・重要な出来事・感情の流れを失わないよう、簡潔に日本語で要約してください。箇条書きでなく地の文で。",
+      apiKey, 1024
+    );
+  }
+
+  // ── スレ間記憶引き継ぎ要約 ──
+  async function generateInheritedMemory(sourceConvs, charType, apiKey) {
+    // sourceConvsは対象スレッド配列（現在は直近1本）
+    let transcript = "";
+    for (const conv of sourceConvs) {
+      const msgs = conv.messages || [];
+      for (const m of msgs) {
+        const name = m.role === "user" ? "多恵子" : "キャラ";
+        const text = m.content || "";
+        if (text) transcript += name + ": " + text + "\n";
+      }
+    }
+    if (!transcript.trim()) return "";
+    const systemInstruction = charType === "plain" ? MEMORY_SYSTEM_PLAIN : MEMORY_SYSTEM_LOVER;
+    console.log("[MEMORY] Generating inherited memory (" + charType + ") from " + sourceConvs.length + " thread(s)...");
+    return callHaikuSummary(
+      "以下の会話を記憶として書き留めてください:\n\n" + transcript,
+      systemInstruction,
+      apiKey, 1500
+    );
   }
 
   // ── thinking剥がしヘルパー ──
@@ -881,14 +960,21 @@ function NagiChat() {
       let effort = settings.effort;
       if (effort === "xhigh" && !is47) effort = "max";
 
-      // ── systemBlocks構築（要約があれば追記）──
-      let systemText = activeChar.prompt + "\n\n" + userProfile;
-      if (summaryText) {
-        systemText += "\n\n## これまでのあらすじ\n" + summaryText;
-      }
+      // ── systemBlocks構築（2ブロック化）──
+      // ブロック1（安定）: キャラprompt + userProfile → キャッシュ長持ち
       const systemBlocks = [
-        { type:"text", text:systemText, cache_control:{ type:"ephemeral" } }
+        { type:"text", text: activeChar.prompt + "\n\n" + userProfile, cache_control:{ type:"ephemeral" } }
       ];
+
+      // ブロック2（変動）: 引き継ぎ記憶 + ローリング要約
+      const currentConvForMemory = conversations.find(c => c.id === activeConvId);
+      const inheritedMemory = currentConvForMemory?.inheritedMemory || "";
+      let block2Parts = [];
+      if (inheritedMemory) block2Parts.push("## 前回までの記憶\n" + inheritedMemory);
+      if (summaryText) block2Parts.push("## これまでのあらすじ\n" + summaryText);
+      if (block2Parts.length > 0) {
+        systemBlocks.push({ type:"text", text: block2Parts.join("\n\n"), cache_control:{ type:"ephemeral" } });
+      }
       if (apiMsgs.length > 1) {
         const lastHistoryIdx = apiMsgs.length - 2;
         const lastHistory = apiMsgs[lastHistoryIdx];
