@@ -1202,6 +1202,22 @@ function NagiChat() {
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
+  // ── テスト用: window.testError('credit') 等で任意のエラー表示を確認 ──
+  useEffect(() => {
+    window.testError = (errorType) => {
+      const validTypes = ["network","timeout","rate_limit","credit","server","auth","content_filter","context_length","fallback"];
+      if (!validTypes.includes(errorType)) {
+        console.warn("[TEST] Unknown type: " + errorType + ". Valid: " + validTypes.join(", "));
+        return;
+      }
+      const charMsg = getCharErrorMessage(activeCharId, errorType);
+      console.log("[TEST] Simulating error type=" + errorType + " for char=" + activeCharId);
+      const eMsg = { role:"assistant", content: charMsg, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, errorType };
+      setConversations(prev => prev.map(c => c.id === activeConvId ? { ...c, messages: [...c.messages, eMsg], updatedAt: Date.now() } : c));
+    };
+    return () => { delete window.testError; };
+  }, [activeCharId, activeConvId, activeChar]);
+
   function handleEdit(msg) {
     updateConv(c => {
       const idx = c.messages.findIndex(m => m.timestamp === msg.timestamp);
