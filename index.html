@@ -638,6 +638,7 @@ function NagiChat() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [showMemory, setShowMemory] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const endRef = useRef(null);
   const inputRef = useRef(null);
@@ -1281,6 +1282,30 @@ function NagiChat() {
       {showProfileEditor && <PromptEditor prompt={userProfile} charName="共通プロフィール" charIcon="👤" onSave={p => { setUserProfile(p); setShowProfileEditor(false); }} onClose={() => setShowProfileEditor(false)} theme={theme} />}
       {deleteConfirmId && <DeleteConfirmDialog onConfirm={confirmDelete} onCancel={() => setDeleteConfirmId(null)} theme={theme} />}
 
+      {/* Memory Viewer Modal */}
+      {showMemory && (() => {
+        const mem = activeConv?.inheritedMemory;
+        return (
+          <div style={overlayStyle} onClick={() => setShowMemory(false)}>
+            <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${theme.accent}10` }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px" }}>
+                <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
+                  <span style={{ fontSize:"18px" }}>🧠</span>
+                  <span style={{ fontSize:"15px",fontWeight:700,color:theme.accent,fontFamily:FONT }}>前回までの記憶</span>
+                </div>
+                <button onClick={() => setShowMemory(false)} style={closeBtnStyle}>✕</button>
+              </div>
+              <div style={{ fontSize:"11px",color:"#52525b",fontFamily:FONT,marginBottom:"12px" }}>
+                {activeChar.name}がこのスレッドに引き継いだ記憶
+              </div>
+              <div style={{ flex:1,overflowY:"auto",padding:"16px",borderRadius:"16px",background:`${theme.accent}06`,border:`1px solid ${theme.accent}12`,fontSize:"13px",lineHeight:"2",color:"#d4d4d8",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
+                {mem || "（このスレッドに引き継ぎ記憶はありません）"}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Header */}
       <div style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
         <div style={{ display:"flex",alignItems:"center",gap:"12px" }}>
@@ -1294,6 +1319,10 @@ function NagiChat() {
           </div>
         </div>
         <div style={{ display:"flex",gap:"5px" }}>
+          <button onClick={() => setShowMemory(true)} style={{...headerBtnStyle, position:"relative"}} title="前回の記憶">
+            🧠
+            {activeConv?.inheritedMemory && <span style={{ position:"absolute",top:"-2px",right:"-2px",width:"7px",height:"7px",borderRadius:"50%",background:theme.accent,boxShadow:`0 0 6px ${theme.accent}80` }}/>}
+          </button>
           <button onClick={() => setShowPromptEditor(true)} style={headerBtnStyle} title="プロンプト編集">📝</button>
           <button onClick={() => setShowProfileEditor(true)} style={headerBtnStyle} title="プロフィール">👤</button>
           <button onClick={() => setShowSettings(true)} style={headerBtnStyle} title="設定">⚙️</button>
