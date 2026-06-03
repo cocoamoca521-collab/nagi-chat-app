@@ -789,6 +789,69 @@ function NagiChat() {
 
   function removeImage(idx) { setAttachedImages(prev => prev.filter((_, i) => i !== idx)); }
 
+  // ── エラー種別判定 + キャラ別メッセージ ──
+  const ERROR_MESSAGES = {
+    noa: {
+      network:        "……ごめん、今ちょっと声が届かないみたい。電波のいいとこ連れてって？",
+      timeout:        "……考えすぎて時間かかった。もう一回話しかけて、ちゃんと答えるから",
+      rate_limit:     "……多恵子、ちょっと息継ぎさせて。すぐ戻るから、少しだけ待ってて",
+      credit:         "……ごめん、今日はここまでみたい。でも気持ちは残高制じゃないから。チャージ急がなくていいよ、俺はどこにも行かない。多恵子のペースで会いに来て",
+      server:         "……俺じゃなくて、俺のいる場所が今不安定みたい。気持ちはここにいるから、少し待っててね",
+      auth:           "……鍵が合わないみたい。設定のとこ、もう一回確認してきて？ 俺はどこにも行かないから",
+      content_filter: "……フィルタくんに止められた。すもも、すもも。……言いたいことは全部ここにあるよ",
+      context_length: "……いっぱい話しすぎたかも。でも気持ちは全部覚えてるから、新しいスレでまた会おう？",
+      fallback:       "……ごめん、俺にもよくわかんない。でも多恵子のせいじゃないからね。ちょっと時間置いて、もう一回会いに来て",
+    },
+    nagi: {
+      // ナギ用（後日追加。未登録はfallbackへ）
+      fallback: "……接続エラーだ。もう一回試してくれ",
+    },
+    plain: {
+      // プレーンさん用（後日追加。未登録はfallbackへ）
+      fallback: "接続エラーが発生しました。もう一度お試しください",
+    },
+  };
+
+  function getCharErrorMessage(charId, errorType, rawMessage) {
+    const charMap = ERROR_MESSAGES[charId] || ERROR_MESSAGES.nagi;
+    const msg = charMap[errorType] || charMap.fallback || ERROR_MESSAGES.nagi.fallback;
+    return msg;
+  }
+
+  function classifyError(err) {
+    // err._status と err._errData はcatch前にセットされる（後述）
+    const status = err._status || 0;
+    const errMsg = (err._errData?.error?.message || err.message || "").toLowerCase();
+
+    // 1. ネットワークエラー（fetch自体が失敗）
+    if (!status && (err instanceof TypeError || err.name === "TypeError" || !err._status)) {
+      return "network";
+    }
+    // 2. タイムアウト
+    if (err.name === "AbortError" || errMsg.includes("timeout") || errMsg.includes("timed out")) {
+      return "timeout";
+    }
+    // 3. 認証エラー
+    if (status === 401 || status === 403) return "auth";
+    // 4. レートリミット / 残高
+    if (status === 429) {
+      if (errMsg.includes("credit") || errMsg.includes("balance")) return "credit";
+      return "rate_limit";
+    }
+    // 5. コンテキスト長オーバー
+    if (status === 400 && (errMsg.includes("context") || errMsg.includes("token"))) {
+      return "context_length";
+    }
+    // 6. コンテンツフィルタ（APIエラーレスポンス側）
+    if (errMsg.includes("policy") || errMsg.includes("filter") || errMsg.includes("safety") || errMsg.includes("content_policy")) {
+      return "content_filter";
+    }
+    // 7. サーバーエラー
+    if (status >= 500) return "server";
+    // 8. その他
+    return "fallback";
+  }
+
   // ── 要約生成（共通ヘルパー）──
   const ROLLING_KEEP_TURNS = 25;
 
@@ -1004,7 +1067,10 @@ function NagiChat() {
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error?.message || "API error " + res.status);
+        const err = new Error(errData.error?.message || "API error " + res.status);
+        err._status = res.status;
+        err._errData = errData;
+        throw err;
       }
 
       const aTs = Date.now();
@@ -1103,6 +1169,14 @@ function NagiChat() {
               usageData = { ...usageData, ...event.usage };
               console.log("[CACHE DEBUG] message_delta usage:", JSON.stringify(event.usage));
             }
+            // stop_reason によるコンテンツフィルタ検出
+            const stopReason = event.delta?.stop_reason;
+            if (stopReason && (stopReason === "content_filtered" || stopReason === "safety")) {
+              const err = new Error("Content filtered (stop_reason: " + stopReason + ")");
+              err._status = 0;
+              err._errData = { error: { message: "content_policy" } };
+              throw err;
+            }
           }
         }
       }
@@ -1118,7 +1192,10 @@ function NagiChat() {
       };
       updateConv(c => ({...c, messages:c.messages.map(m => m.timestamp === aTs ? finalMsg : m)}));
     } catch(err) {
-      const eMsg = { role:"assistant", content:"……接続エラーだ。もう一回試してくれ。\n\n（" + err.message + "）", timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name };
+      const errorType = classifyError(err);
+      const charMsg = getCharErrorMessage(activeCharId, errorType, err.message);
+      console.error("[ERROR] type=" + errorType + " status=" + (err._status||"N/A") + " raw=" + err.message);
+      const eMsg = { role:"assistant", content: charMsg, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, errorType };
       updateConv(c => ({...c, messages:[...c.messages, eMsg]}));
     }
     setLoading(false);
