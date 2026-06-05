@@ -943,12 +943,35 @@ function NagiChat() {
 
   async function handleSend() {
     if ((!input.trim() && attachedImages.length === 0) || loading || !settings.apiKey) return;
+
+    // 編集モードで確定 → このタイミングで初めて後続を削除
+    if (editingMsg) {
+      const editTarget = editingMsg.msg;
+      setEditingMsg(null);
+      setConversations(prev => prev.map(c => {
+        if (c.id !== activeConvId) return c;
+        const idx = c.messages.findIndex(m => m.timestamp === editTarget.timestamp);
+        if (idx === -1) return c;
+        return { ...c, messages: c.messages.slice(0, idx), updatedAt: Date.now() };
+      }));
+      // messagesが更新される前にsendが走るので、ここで直接取得
+      const conv = conversations.find(c => c.id === activeConvId);
+      if (conv) {
+        const idx = conv.messages.findIndex(m => m.timestamp === editTarget.timestamp);
+        if (idx !== -1) {
+          // messages変数を上書き（このスコープのみ）
+          var truncatedMessages = conv.messages.slice(0, idx);
+        }
+      }
+    }
+
     const msgImages = attachedImages.map(img => ({ base64: img.base64, type: img.type, preview: img.preview }));
     const userMsg = { role:"user", content:input.trim(), timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, images:msgImages };
     updateConv(c => ({...c, messages:[...c.messages, userMsg]}));
     setInput(""); setAttachedImages([]); setLoading(true);
     try {
-      const allMsgs = [...messages, userMsg];
+      const baseMsgs = (typeof truncatedMessages !== "undefined") ? truncatedMessages : messages;
+      const allMsgs = [...baseMsgs, userMsg];
 
       // ── 【B】ローリング要約 ──
       let turnCount = 0;
@@ -1229,13 +1252,16 @@ function NagiChat() {
   }, [activeCharId, activeConvId, activeChar]);
 
   function handleEdit(msg) {
-    updateConv(c => {
-      const idx = c.messages.findIndex(m => m.timestamp === msg.timestamp);
-      if (idx === -1) return c;
-      return { ...c, messages: c.messages.slice(0, idx) };
-    });
+    // 編集モードに入るだけ。まだ削除しない
+    setEditingMsg({ msg, prevInput: input });
     setInput(msg.content || "");
     setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
+  function cancelEdit() {
+    if (!editingMsg) return;
+    setInput(editingMsg.prevInput || "");
+    setEditingMsg(null);
   }
 
   async function handleExport(convId) {
@@ -1306,6 +1332,8 @@ function NagiChat() {
 
   // ── 復元（JSON読み込み）──
   const [restoreConfirm, setRestoreConfirm] = useState(null);
+  const [editingMsg, setEditingMsg] = useState(null); // { msg, prevInput }
+
 
   function handleRestore(file) {
     const reader = new FileReader();
@@ -1445,6 +1473,15 @@ function NagiChat() {
 
       {/* Input Area */}
       <div style={{ padding:"8px 12px max(16px, env(safe-area-inset-bottom))",borderTop:`1px solid ${theme.accent}10`,background:theme.inputBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
+        {editingMsg && (
+          <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",maxWidth:"720px",margin:"0 auto 6px",padding:"6px 14px",borderRadius:"12px",background:`${theme.accent}12`,border:`1px solid ${theme.accent}25` }}>
+            <span style={{ fontSize:"13px",color:theme.accent }}>✏️ 編集中…</span>
+            <button onClick={cancelEdit} style={{ fontSize:"12px",color:"#a1a1aa",background:"none",border:"none",cursor:"pointer",padding:"2px 8px",borderRadius:"8px",transition:"all 0.2s" }}
+              onMouseEnter={e => { e.target.style.color = "#e4e4e7"; e.target.style.background = "rgba(255,255,255,0.06)"; }}
+              onMouseLeave={e => { e.target.style.color = "#a1a1aa"; e.target.style.background = "none"; }}
+            >キャンセル</button>
+          </div>
+        )}
         {attachedImages.length > 0 && (
           <div style={{ display:"flex",gap:"6px",padding:"6px 4px 8px",overflowX:"auto",maxWidth:"720px",margin:"0 auto" }}>
             {attachedImages.map((img, idx) => (
