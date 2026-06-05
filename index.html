@@ -452,10 +452,11 @@ const inputStyle = { width:"100%",padding:"11px 14px",borderRadius:"14px",border
 const closeBtnStyle = { background:"none",border:"none",color:"#71717a",fontSize:"18px",cursor:"pointer",padding:"4px 6px" };
 
 // ═══ Settings Panel ═══
-function SettingsPanel({ settings, onSave, onClose, theme }) {
+function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }) {
   const [s, setS] = useState({ ...settings });
   const up = (k, v) => setS(prev => ({ ...prev, [k]: v }));
   const t = theme || THEMES.nagi;
+  const restoreRef = useRef(null);
   const btnPri = { flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT };
   const btnSec = { flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT };
   return (
@@ -516,6 +517,14 @@ function SettingsPanel({ settings, onSave, onClose, theme }) {
           </div>
           <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{s.webSearch?"ON — 検索できる 🔍":"OFF"}</span>
         </div>
+        <label style={{...labelStyle,marginTop:"22px"}}>データ管理</label>
+        <div style={{ display:"flex",gap:"8px" }}>
+          <button onClick={onBackup} style={{ flex:1,padding:"11px",borderRadius:"14px",border:`1px solid ${t.accent}25`,background:`${t.accent}08`,color:t.accentLight,fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:500 }}>📦 バックアップ</button>
+          <button onClick={() => restoreRef.current?.click()} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)",color:"#a1a1aa",fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:500 }}>📥 復元</button>
+          <input ref={restoreRef} type="file" accept=".json" onChange={e => { if (e.target.files?.[0]) onRestore(e.target.files[0]); e.target.value=""; }} style={{ display:"none" }} />
+        </div>
+        <div style={{ fontSize:"9px",color:"#3f3f46",marginTop:"6px",fontFamily:FONT }}>全会話・設定・記憶をJSONで書き出し／読み込み</div>
+
         <div style={{ display:"flex",gap:"8px",marginTop:"24px" }}>
           <button onClick={onClose} style={btnSec}>キャンセル</button>
           <button onClick={() => onSave(s)} style={btnPri}>保存</button>
@@ -1272,12 +1281,92 @@ function NagiChat() {
 
   function handleKeyDown(e) { if (e.key==="Enter" && (e.ctrlKey||e.metaKey)) { e.preventDefault(); handleSend(); } }
 
+  // ── バックアップ（全データJSON書き出し）──
+  async function handleBackup() {
+    const data = {};
+    Object.values(SK).forEach(key => {
+      const val = sGet(key);
+      if (val !== null) data[key] = val;
+    });
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const fileName = "nagichat-backup-" + dateStr + ".json";
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const file = new File([blob], fileName, { type: "application/json" });
+    if (navigator.share) {
+      try { await navigator.share({ title: "ナギChat バックアップ", files: [file] }); return; }
+      catch (err) { if (err.name === "AbortError") return; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+
+  // ── 復元（JSON読み込み）──
+  const [restoreConfirm, setRestoreConfirm] = useState(null);
+
+  function handleRestore(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!data || typeof data !== "object") throw new Error("Invalid format");
+        setRestoreConfirm(data);
+      } catch {
+        alert("ファイルを読み込めませんでした。JSONファイルか確認してください。");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function confirmRestore() {
+    const data = restoreConfirm;
+    setRestoreConfirm(null);
+    try {
+      Object.values(SK).forEach(key => {
+        if (data[key] !== undefined) sSet(key, data[key]);
+        else localStorage.removeItem(key);
+      });
+      // 状態を再読み込み
+      if (data[SK.settings]) setSettings(prev => ({ ...prev, ...data[SK.settings] }));
+      if (data[SK.convos]) {
+        setConversations(data[SK.convos]);
+        const first = data[SK.convos][0];
+        if (first) { setActiveConvId(first.id); setActiveCharId(first.charId || "nagi"); }
+      }
+      if (data[SK.chars]?.length > 0) {
+        const merged = DEFAULT_CHARS.map(def => { const saved = data[SK.chars].find(s => s.id === def.id); return saved ? { ...def, prompt: saved.prompt } : def; });
+        setCharacters(merged);
+      }
+      if (data[SK.profile]) setUserProfile(data[SK.profile]);
+      setShowSettings(false);
+      console.log("[BACKUP] Restored successfully");
+    } catch (err) {
+      alert("復元中にエラーが発生しました: " + err.message);
+    }
+  }
+
   const hasInput = input.trim() || attachedImages.length > 0;
 
   return (
     <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
       <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} />
-      {showSettings && <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); }} onClose={() => settings.apiKey ? setShowSettings(false) : null} theme={theme} />}
+      {showSettings && <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); }} onClose={() => settings.apiKey ? setShowSettings(false) : null} theme={theme} onBackup={handleBackup} onRestore={handleRestore} />}
+      {restoreConfirm && (
+        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
+          <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5)`,textAlign:"center" }}>
+            <div style={{ fontSize:"32px",marginBottom:"14px" }}>📥</div>
+            <div style={{ fontSize:"15px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,marginBottom:"8px" }}>データを復元する？</div>
+            <div style={{ fontSize:"12px",color:"#71717a",fontFamily:FONT,marginBottom:"22px",lineHeight:"1.6" }}>現在のデータは上書きされます</div>
+            <div style={{ display:"flex",gap:"10px" }}>
+              <button onClick={() => setRestoreConfirm(null)} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:500 }}>やめる</button>
+              <button onClick={confirmRestore} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:theme.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:600,boxShadow:`0 3px 12px ${theme.userShadow}` }}>復元する</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showPromptEditor && <PromptEditor prompt={activeChar.prompt} charName={activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showProfileEditor && <PromptEditor prompt={userProfile} charName="共通プロフィール" charIcon="👤" onSave={p => { setUserProfile(p); setShowProfileEditor(false); }} onClose={() => setShowProfileEditor(false)} theme={theme} />}
       {deleteConfirmId && <DeleteConfirmDialog onConfirm={confirmDelete} onCancel={() => setDeleteConfirmId(null)} theme={theme} />}
