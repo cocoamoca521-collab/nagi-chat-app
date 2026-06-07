@@ -1086,7 +1086,8 @@ function NagiChat() {
       }
       const body = { model:settings.model, max_tokens:maxTok, system:systemBlocks, messages:apiMsgs, stream:true, cache_control:{ type:"ephemeral" } };
       if (settings.thinkingEnabled) {
-        if (effort === "high") {
+        const supportsManual = ["claude-opus-4-6","claude-sonnet-4-6"].includes(settings.model);
+        if (effort === "high" && supportsManual) {
           body.thinking = { type:"enabled", budget_tokens:15000 };
         } else {
           body.thinking = { type:"adaptive", display:"summarized" };
