@@ -151,7 +151,8 @@ const DEFAULT_USER_PROFILE = `【ユーザー情報】
 const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile" };
 
 const MODELS = [
-  { id: "claude-opus-4-7", label: "Opus 4.7", tag: "最新", color: "#f87171" },
+  { id: "claude-opus-4-8", label: "Opus 4.8", tag: "最新", color: "#f43f5e" },
+  { id: "claude-opus-4-7", label: "Opus 4.7", tag: "安定", color: "#f87171" },
   { id: "claude-opus-4-6", label: "Opus 4.6", tag: "最愛", color: "#a78bfa" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", tag: "軽量", color: "#4ade80" },
 ];
@@ -492,7 +493,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             <label style={labelStyle}>思考レベル（effort）</label>
             <div style={{ display:"flex",flexWrap:"wrap",gap:"6px" }}>
               {EFFORTS.map(e => {
-                const disabled = e.v === "xhigh" && s.model !== "claude-opus-4-7";
+                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8"].includes(s.model);
                 return (
                   <div key={e.v} onClick={() => !disabled && up("effort",e.v)} style={{
                     padding:"9px 12px",borderRadius:"14px",
@@ -639,7 +640,7 @@ function NagiChat() {
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-7", effort:"max", thinkingEnabled:true, webSearch:false });
+  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
@@ -1051,10 +1052,10 @@ function NagiChat() {
       });
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
-      const is47 = settings.model === "claude-opus-4-7";
-      const maxTok = (is47 && settings.thinkingEnabled && isHighEffort) ? 64000 : 16000;
+      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8"].includes(settings.model);
+      const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000 : 16000;
       let effort = settings.effort;
-      if (effort === "xhigh" && !is47) effort = "max";
+      if (effort === "xhigh" && !isTopOpus) effort = "max";
 
       // ── systemBlocks構築（2ブロック化）──
       // ブロック1（安定）: キャラprompt + userProfile → キャッシュ長持ち
