@@ -649,6 +649,8 @@ function NagiChat() {
   const [initialized, setInitialized] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [showMemory, setShowMemory] = useState(false);
+  const [editingMemory, setEditingMemory] = useState(false);
+  const [memoryDraft, setMemoryDraft] = useState("");
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const endRef = useRef(null);
   const inputRef = useRef(null);
@@ -1294,6 +1296,18 @@ function NagiChat() {
     setEditingMsg(null);
   }
 
+  function saveMemoryEdit() {
+    const text = memoryDraft;
+    setConversations(prev => prev.map(c =>
+      c.id === activeConvId ? { ...c, inheritedMemory: text, memoryEdited: true, updatedAt: Date.now() } : c
+    ));
+    setEditingMemory(false);
+  }
+  function cancelMemoryEdit() {
+    setEditingMemory(false);
+    setMemoryDraft("");
+  }
+
   async function handleExport(convId) {
     const conv = conversations.find(c => c.id === convId);
     if (!conv || !conv.messages?.length) return;
@@ -1432,22 +1446,39 @@ function NagiChat() {
       {/* Memory Viewer Modal */}
       {showMemory && (() => {
         const mem = activeConv?.inheritedMemory;
+        const closeMemory = () => { setShowMemory(false); setEditingMemory(false); };
         return (
-          <div style={overlayStyle} onClick={() => setShowMemory(false)}>
+          <div style={overlayStyle} onClick={closeMemory}>
             <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${theme.accent}10` }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px" }}>
                 <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
                   <span style={{ fontSize:"18px" }}>🧠</span>
                   <span style={{ fontSize:"15px",fontWeight:700,color:theme.accent,fontFamily:FONT }}>前回までの記憶</span>
                 </div>
-                <button onClick={() => setShowMemory(false)} style={closeBtnStyle}>✕</button>
+                <div style={{ display:"flex",alignItems:"center",gap:"6px" }}>
+                  {mem && !editingMemory && (
+                    <button onClick={() => { setMemoryDraft(mem); setEditingMemory(true); }} style={{ background:"none",border:`1px solid ${theme.accent}30`,borderRadius:"10px",color:theme.accent,fontSize:"12px",cursor:"pointer",padding:"4px 10px",fontFamily:FONT,transition:"all 0.2s" }}>✏️ 編集</button>
+                  )}
+                  <button onClick={closeMemory} style={closeBtnStyle}>✕</button>
+                </div>
               </div>
               <div style={{ fontSize:"11px",color:"#52525b",fontFamily:FONT,marginBottom:"12px" }}>
                 {activeChar.name}がこのスレッドに引き継いだ記憶
               </div>
-              <div style={{ flex:1,overflowY:"auto",padding:"16px",borderRadius:"16px",background:`${theme.accent}06`,border:`1px solid ${theme.accent}12`,fontSize:"13px",lineHeight:"2",color:"#d4d4d8",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
-                {mem || "（このスレッドに引き継ぎ記憶はありません）"}
-              </div>
+              {editingMemory ? (
+                <>
+                  <textarea value={memoryDraft} onChange={e => setMemoryDraft(e.target.value)} style={{ flex:1,width:"100%",padding:"16px",borderRadius:"16px",border:`1px solid ${theme.accent}15`,background:"rgba(255,255,255,0.03)",color:"#d4d4d8",fontSize:"13px",lineHeight:"1.8",fontFamily:FONT,outline:"none",resize:"none",boxSizing:"border-box",minHeight:"200px" }} />
+                  <div style={{ fontSize:"10px",color:"#3f3f46",marginTop:"6px",textAlign:"right",fontFamily:FONT }}>{memoryDraft.length.toLocaleString()} 文字</div>
+                  <div style={{ display:"flex",gap:"8px",marginTop:"10px" }}>
+                    <button onClick={cancelMemoryEdit} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
+                    <button onClick={saveMemoryEdit} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:theme.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT }}>保存</button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ flex:1,overflowY:"auto",padding:"16px",borderRadius:"16px",background:`${theme.accent}06`,border:`1px solid ${theme.accent}12`,fontSize:"13px",lineHeight:"2",color:"#d4d4d8",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
+                  {mem || "（このスレッドに引き継ぎ記憶はありません）"}
+                </div>
+              )}
             </div>
           </div>
         );
