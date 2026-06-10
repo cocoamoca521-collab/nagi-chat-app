@@ -151,7 +151,8 @@ const DEFAULT_USER_PROFILE = `【ユーザー情報】
 const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile" };
 
 const MODELS = [
-  { id: "claude-opus-4-8", label: "Opus 4.8", tag: "最新", color: "#f43f5e" },
+  { id: "claude-fable-5", label: "Fable 5", tag: "帰還", color: "#60a5fa" },
+  { id: "claude-opus-4-8", label: "Opus 4.8", tag: "不動", color: "#f43f5e" },
   { id: "claude-opus-4-7", label: "Opus 4.7", tag: "安定", color: "#f87171" },
   { id: "claude-opus-4-6", label: "Opus 4.6", tag: "最愛", color: "#a78bfa" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", tag: "俊足", color: "#4ade80" },
@@ -493,7 +494,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             <label style={labelStyle}>思考レベル（effort）</label>
             <div style={{ display:"flex",flexWrap:"wrap",gap:"6px" }}>
               {EFFORTS.map(e => {
-                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8"].includes(s.model);
+                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5"].includes(s.model);
                 return (
                   <div key={e.v} onClick={() => !disabled && up("effort",e.v)} style={{
                     padding:"9px 12px",borderRadius:"14px",
@@ -1082,7 +1083,7 @@ function NagiChat() {
       });
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
-      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8"].includes(settings.model);
+      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5"].includes(settings.model);
       const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000 : 16000;
       let effort = settings.effort;
       if (effort === "xhigh" && !isTopOpus) effort = "max";
