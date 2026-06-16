@@ -741,15 +741,24 @@ function NagiChat() {
 
     // ── スレ間記憶引き継ぎ ──
     if (!settings.apiKey) return;
-    // 同じキャラの、新スレ以外の最新スレッド（メッセージあり）を探す
     const sameCharConvs = conversations
       .filter(c => c.charId === activeCharId && c.id !== newId && (c.messages||[]).length >= 2)
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    const sourceConvs = sameCharConvs.slice(0, 1); // 直近1本（将来N本に拡張可）
-    if (sourceConvs.length === 0) return;
+    if (sameCharConvs.length === 0) return;
 
+    const mostRecent = sameCharConvs[0];
+
+    // ── 実験スレ: 要約せず、そのスレが受け取っていた記憶をそのまま次へ素通し ──
+    if (mostRecent.skipMemory) {
+      const passthrough = mostRecent.inheritedMemory || "";
+      setConversations(prev => prev.map(c => c.id === newId ? { ...c, inheritedMemory: passthrough, memoryPassthrough: true } : c));
+      console.log("[MEMORY] Skip thread — passing previous memory through (no summary call). len=" + passthrough.length);
+      return;
+    }
+
+    // ── 通常: 直近スレを要約して引き継ぐ ──
     const charType = activeChar.charType || (activeCharId === "plain" ? "plain" : "lover");
-    const memory = await generateInheritedMemory(sourceConvs, charType, settings.apiKey);
+    const memory = await generateInheritedMemory([mostRecent], charType, settings.apiKey);
     if (memory) {
       setConversations(prev => prev.map(c => c.id === newId ? { ...c, inheritedMemory: memory } : c));
       console.log("[MEMORY] Inherited memory saved to new thread:", memory.slice(0, 100) + "...");
@@ -1465,6 +1474,20 @@ function NagiChat() {
               </div>
               <div style={{ fontSize:"11px",color:"#52525b",fontFamily:FONT,marginBottom:"12px" }}>
                 {activeChar.name}がこのスレッドに引き継いだ記憶
+              </div>
+              <div onClick={() => setConversations(prev => prev.map(c => c.id === activeConvId ? { ...c, skipMemory: !c.skipMemory, updatedAt: Date.now() } : c))}
+                style={{ display:"flex",alignItems:"center",gap:"10px",padding:"10px 12px",borderRadius:"12px",background: activeConv?.skipMemory ? "rgba(250,204,21,0.06)" : "rgba(255,255,255,0.03)",border:`1px solid ${activeConv?.skipMemory ? "rgba(250,204,21,0.25)" : "rgba(255,255,255,0.06)"}`,cursor:"pointer",marginBottom:"14px",transition:"all 0.2s" }}>
+                <div style={{ width:"42px",height:"24px",borderRadius:"12px",background: activeConv?.skipMemory ? "linear-gradient(135deg, #eab308, #facc15)" : "rgba(255,255,255,0.08)",position:"relative",flexShrink:0 }}>
+                  <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left: activeConv?.skipMemory ? "20px" : "2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:"13px",color: activeConv?.skipMemory ? "#facc15" : "#d4d4d8",fontFamily:FONT,fontWeight:600 }}>
+                    🧪 {activeConv?.skipMemory ? "実験スレ — 次に引き継がない" : "通常スレ — 次に引き継ぐ"}
+                  </div>
+                  <div style={{ fontSize:"10px",color:"#71717a",fontFamily:FONT,marginTop:"2px",lineHeight:"1.5" }}>
+                    ONで、このスレは要約されず、ひとつ前の記憶がそのまま次へ進みます
+                  </div>
+                </div>
               </div>
               {editingMemory ? (
                 <>
