@@ -30,6 +30,7 @@ document.head.appendChild(mLink);
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; width: 100%; overflow: hidden; }
@@ -359,7 +360,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit }) {
         fontFamily: FONT, whiteSpace: "pre-wrap", wordBreak: "break-word",
         boxShadow: isUser ? `0 3px 16px ${t.userShadow}` : `0 1px 6px rgba(0,0,0,0.15)`,
         border: isUser ? "none" : `1px solid ${t.bubbleBorder}`,
-      }}>{msg.content}</div>
+      }} dangerouslySetInnerHTML={{ __html: window.marked ? marked.parseInline(msg.content || "") : (msg.content || "") }} />
       <div style={{ fontSize: "9px", color: "#52525b", marginTop: "4px", paddingLeft: isUser ? 0 : "12px", paddingRight: isUser ? "12px" : 0, display: "flex", alignItems: "center", gap: "6px" }}>
         <span>{fTime(msg.timestamp)}</span>
         {isUser && onEdit && (
