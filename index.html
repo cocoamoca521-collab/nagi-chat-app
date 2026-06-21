@@ -1103,7 +1103,10 @@ function NagiChat() {
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
       const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5"].includes(settings.model);
-      const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000 : 16000;
+      const isOpus45 = settings.model === "claude-opus-4-5-20251101";
+      const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000
+                   : (isOpus45 && settings.thinkingEnabled) ? 32000
+                   : 16000;
       let effort = settings.effort;
       if (effort === "xhigh" && !isTopOpus) effort = "max";
 
@@ -1136,8 +1139,9 @@ function NagiChat() {
       }
       const body = { model:settings.model, max_tokens:maxTok, system:systemBlocks, messages:apiMsgs, stream:true, cache_control:{ type:"ephemeral" } };
       if (settings.thinkingEnabled) {
+        const manualOnly = ["claude-opus-4-5-20251101"].includes(settings.model);
         const supportsManual = ["claude-opus-4-6","claude-sonnet-4-6"].includes(settings.model);
-        if (effort === "high" && supportsManual) {
+        if (manualOnly || (effort === "high" && supportsManual)) {
           body.thinking = { type:"enabled", budget_tokens:15000 };
         } else {
           body.thinking = { type:"adaptive", display:"summarized" };
