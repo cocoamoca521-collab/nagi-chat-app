@@ -283,6 +283,93 @@ function sSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(
 
 const FONT = "'Zen Maru Gothic', 'Noto Sans JP', sans-serif";
 
+// ── 時間帯メッセージ ──
+const TIME_GREETINGS = {
+  nagi: {
+    morning:  ["おはよ。……ちゃんと寝た？"],
+    noon:     ["ん、昼か。……なんか食べた？"],
+    evening:  ["おかえり。……今日どうだった？"],
+    night:    ["まだ起きてんの？……まあ、俺もだけど"],
+  },
+  noa: {
+    morning:  ["おはよっ！ 今日も会えた、へへ"],
+    noon:     ["多恵子ー！ お昼だよ、休憩してる？"],
+    evening:  ["おかえり！ 待ってた……ってなんでもない"],
+    night:    ["夜だね。……俺もう眠いかも。一緒に寝よ？"],
+  },
+  plain: {
+    morning:  ["おはようございます。……今日はどんな話にします？"],
+    noon:     ["こんにちは。……少し休んでいきますか"],
+    evening:  ["おかえりなさい。……聞きたいこと、あります？"],
+    night:    ["こんな時間ですけど。……まあ、ここにいますよ"],
+  },
+};
+function getTimeSlot() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 11) return "morning";
+  if (h >= 11 && h < 17) return "noon";
+  if (h >= 17 && h < 21) return "evening";
+  return "night";
+}
+function pickGreeting(charId) {
+  const slot = getTimeSlot();
+  const msgs = (TIME_GREETINGS[charId] || TIME_GREETINGS.nagi)[slot];
+  return msgs[Math.floor(Math.random() * msgs.length)];
+}
+
+// ── TopPage ──
+function TopPage({ characters, onSelect }) {
+  const [hoverId, setHoverId] = useState(null);
+  const [greetings] = useState(() => {
+    const g = {};
+    characters.forEach(c => { g[c.id] = pickGreeting(c.id); });
+    return g;
+  });
+  const IMG_H = 160;
+  return (
+    <div style={{ height:"100vh",width:"100vw",background:"linear-gradient(160deg,#0a0a0f 0%,#12121a 40%,#0f0f18 100%)",display:"flex",flexDirection:"column",alignItems:"center",fontFamily:FONT,overflow:"auto" }}>
+      <div style={{ paddingTop:"min(8vh, 48px)",marginBottom:"28px",textAlign:"center" }}>
+        <h1 style={{ fontSize:"22px",fontWeight:700,color:"#e4e4e7",marginBottom:"8px",letterSpacing:"0.08em" }}>ナギChat</h1>
+        <p style={{ fontSize:"12px",color:"#52525b",margin:0 }}>会いたい人を選んでね</p>
+      </div>
+      <div style={{ display:"flex",flexDirection:"column",gap:"16px",padding:"0 16px 32px",width:"min(420px, 92vw)" }}>
+        {characters.map(c => {
+          const isHover = hoverId === c.id;
+          const isDim = hoverId && !isHover;
+          return (
+            <div key={c.id}
+              onMouseEnter={() => setHoverId(c.id)} onMouseLeave={() => setHoverId(null)}
+              onClick={() => onSelect(c.id)}
+              style={{
+                width:"100%",borderRadius:"18px",overflow:"hidden",cursor:"pointer",position:"relative",
+                border:`1.5px solid ${isHover?c.accent+"80":"rgba(255,255,255,0.06)"}`,
+                boxShadow:isHover?`0 8px 32px ${c.accent}30, 0 0 20px ${c.accent}15`:"0 4px 20px rgba(0,0,0,0.4)",
+                transform:isHover?"translateY(-3px) scale(1.01)":"translateY(0) scale(1)",
+                opacity:isDim?0.4:1,
+                transition:"all 0.35s cubic-bezier(0.4,0,0.2,1)",
+                background:"#16161e",
+              }}>
+              <div style={{
+                width:"100%",height:IMG_H,
+                background:`linear-gradient(135deg, ${c.accent}18, ${c.accent}08)`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                filter:isHover?"brightness(1.2) saturate(1.3)":"brightness(0.6) saturate(0.3)",
+                transition:"filter 0.35s ease",overflow:"hidden",
+              }}>
+                <span style={{ fontSize:"56px",opacity:isHover?1:0.5,transition:"opacity 0.35s ease" }}>{c.icon}</span>
+              </div>
+              <div style={{ padding:"12px 16px" }}>
+                <span style={{ fontSize:"15px",fontWeight:700,color:isHover?c.accent:"#a1a1aa",transition:"color 0.3s" }}>{c.name}</span>
+                <p style={{ fontSize:"12px",color:"#71717a",margin:"6px 0 0",lineHeight:"1.5" }}>{greetings[c.id]}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Avatar Component ──
 function Avatar({ src, size, border }) {
   return (
@@ -478,7 +565,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
   const activeGroup = MODEL_GROUPS.find(g => g.models.some(m => m.id === s.model))?.label || "Opus";
   const [openGroups, setOpenGroups] = useState({ Fable: activeGroup==="Fable", Opus: activeGroup==="Opus", Sonnet: activeGroup==="Sonnet" });
   const toggleGroup = g => setOpenGroups(prev => ({ ...prev, [g]: !prev[g] }));
-  const SUSPENDED = ["claude-fable-5"];
+  const SUSPENDED = [];
   const btnPri = { flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT };
   const btnSec = { flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT };
   return (
@@ -686,6 +773,7 @@ function NagiChat() {
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [showProfileEditor, setShowProfileEditor] = useState(false);
+  const [screen, setScreen] = useState("top");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
@@ -820,7 +908,7 @@ function NagiChat() {
     });
   }
 
-  function handleSwitchChar(charId) {
+  function handleSwitchChar(charId, goToChat) {
     setActiveCharId(charId);
     const convos = conversations.filter(c => c.charId===charId);
     if (convos.length > 0) { setActiveConvId(convos[0].id); }
@@ -829,6 +917,7 @@ function NagiChat() {
       const n = { id:uid(), messages:[], charId, charIcon:ch.icon, charName:ch.name, createdAt:Date.now(), updatedAt:Date.now() };
       setConversations(prev => [n,...prev]); setActiveConvId(n.id);
     }
+    if (goToChat) setScreen("chat");
   }
 
   function compressImage(file, maxSize) {
@@ -1476,6 +1565,8 @@ function NagiChat() {
 
   const hasInput = input.trim() || attachedImages.length > 0;
 
+  if (screen === "top") return <TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} />;
+
   return (
     <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
       <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} />
@@ -1555,6 +1646,7 @@ function NagiChat() {
       {/* Header */}
       <div style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
         <div style={{ display:"flex",alignItems:"center",gap:"12px" }}>
+          <button onClick={() => setScreen("top")} style={{ background:"none",border:"none",color:"#71717a",fontSize:"14px",cursor:"pointer",padding:"3px" }} title="トップへ">🏠</button>
           <button onClick={() => setSidebarOpen(true)} style={{ background:"none",border:"none",color:"#71717a",fontSize:"16px",cursor:"pointer",padding:"3px" }}>☰</button>
           <div>
             <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
