@@ -544,7 +544,7 @@ function TypingIndicator({ avatar, name, theme }) {
 }
 
 // ═══ Char Switcher ═══
-function CharSwitcher({ chars, activeId, onSwitch, theme }) {
+function CharSwitcher({ chars, activeId, onSwitch, theme, onBackLongPressStart, onBackLongPressEnd }) {
   const t = theme || THEMES.nagi;
   return (
     <div style={{ display: "flex", gap: "3px", background: "rgba(255,255,255,0.04)", borderRadius: "14px", padding: "3px" }}>
@@ -552,7 +552,14 @@ function CharSwitcher({ chars, activeId, onSwitch, theme }) {
         const ct = THEMES[c.id] || THEMES.nagi;
         const isActive = c.id === activeId;
         return (
-          <button key={c.id} onClick={() => onSwitch(c.id)} style={{
+          <button key={c.id} onClick={() => onSwitch(c.id)}
+            onMouseDown={isActive ? onBackLongPressStart : undefined}
+            onMouseUp={isActive ? onBackLongPressEnd : undefined}
+            onMouseLeave={isActive ? onBackLongPressEnd : undefined}
+            onTouchStart={isActive ? onBackLongPressStart : undefined}
+            onTouchEnd={isActive ? onBackLongPressEnd : undefined}
+            title={isActive ? "長押しでトップページへ" : undefined}
+            style={{
             padding: "4px", borderRadius: "12px", border: "none",
             background: isActive ? `${ct.accent}20` : "transparent",
             cursor: "pointer", transition: "all 0.25s", display: "flex", alignItems: "center", justifyContent: "center",
@@ -1699,13 +1706,8 @@ function NagiChat() {
           <button onClick={() => setSidebarOpen(true)} style={{ background:"none",border:"none",color:"#71717a",fontSize:"16px",cursor:"pointer",padding:"3px" }}>☰</button>
           <div>
             <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
-              <CharSwitcher chars={characters} activeId={activeCharId} onSwitch={handleSwitchChar} theme={theme} />
-              <span
-                onMouseDown={startBackLongPress} onMouseUp={cancelBackLongPress} onMouseLeave={cancelBackLongPress}
-                onTouchStart={startBackLongPress} onTouchEnd={cancelBackLongPress}
-                title="長押しでトップページへ"
-                style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent,cursor:"pointer",userSelect:"none",WebkitTapHighlightColor:"transparent" }}
-              >{activeChar.name}</span>
+              <CharSwitcher chars={characters} activeId={activeCharId} onSwitch={handleSwitchChar} theme={theme} onBackLongPressStart={startBackLongPress} onBackLongPressEnd={cancelBackLongPress} />
+              <span style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent }}>{activeChar.name}</span>
             </div>
             <StatusBadges model={settings.model} effort={settings.effort} thinkingEnabled={settings.thinkingEnabled} webSearch={settings.webSearch} />
           </div>
