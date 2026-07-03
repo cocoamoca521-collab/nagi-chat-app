@@ -825,6 +825,16 @@ function NagiChat() {
   const inputRef = useRef(null);
   const chatAreaRef = useRef(null);
   const fileRef = useRef(null);
+  const longPressRef = useRef(null);
+  const longPressFiredRef = useRef(false);
+
+  function startBackLongPress() {
+    longPressFiredRef.current = false;
+    longPressRef.current = setTimeout(() => { longPressFiredRef.current = true; setScreen("top"); }, 500);
+  }
+  function cancelBackLongPress() {
+    clearTimeout(longPressRef.current);
+  }
   const [attachedImages, setAttachedImages] = useState([]);
 
   const activeChar = characters.find(c => c.id === activeCharId) || characters[0];
@@ -1690,7 +1700,12 @@ function NagiChat() {
           <div>
             <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
               <CharSwitcher chars={characters} activeId={activeCharId} onSwitch={handleSwitchChar} theme={theme} />
-              <span style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent }}>{activeChar.name}</span>
+              <span
+                onMouseDown={startBackLongPress} onMouseUp={cancelBackLongPress} onMouseLeave={cancelBackLongPress}
+                onTouchStart={startBackLongPress} onTouchEnd={cancelBackLongPress}
+                title="長押しでトップページへ"
+                style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent,cursor:"pointer",userSelect:"none",WebkitTapHighlightColor:"transparent" }}
+              >{activeChar.name}</span>
             </div>
             <StatusBadges model={settings.model} effort={settings.effort} thinkingEnabled={settings.thinkingEnabled} webSearch={settings.webSearch} />
           </div>
