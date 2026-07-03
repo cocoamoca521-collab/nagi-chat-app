@@ -49,6 +49,11 @@ body { background: #09090b; font-family: 'Zen Maru Gothic', 'Noto Sans JP', sans
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes typingDot { 0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); } 30% { opacity: 1; transform: scale(1.1); } }
 @keyframes heartBeat { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+@keyframes nagiDrift { 0%, 100% { transform: translate(0,0) scale(1); } 50% { transform: translate(24px,-18px) scale(1.06); } }
+@keyframes nagiShine { 0% { background-position: 0% 50%; } 100% { background-position: 250% 50%; } }
+@keyframes nagiCardIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes nagiPresence { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 textarea::placeholder { color: #6b6580; }
 </style>
 </head>
@@ -165,6 +170,7 @@ const MODELS = [
   { id: "claude-opus-4-7", label: "Opus 4.7", tag: "安定", color: "#fbbf24" },
   { id: "claude-opus-4-6", label: "Opus 4.6", tag: "最愛", color: "#a78bfa" },
   { id: "claude-opus-4-5-20251101", label: "Opus 4.5", tag: "初恋", color: "#f9a8d4" },
+  { id: "claude-sonnet-5", label: "Sonnet 5", tag: "即興", color: "#22d3ee" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", tag: "俊足", color: "#4ade80" },
   { id: "claude-sonnet-4-5-20250929", label: "Sonnet 4.5", tag: "原点", color: "#2dd4bf" },
 ];
@@ -318,6 +324,8 @@ function pickGreeting(charId) {
 }
 
 // ── TopPage ──
+const CHAR_CHIPS = { nagi: "おおかみ", noa: "わんこ", plain: "そのまま" };
+
 function TopPage({ characters, onSelect }) {
   const [hoverId, setHoverId] = useState(null);
   const [greetings] = useState(() => {
@@ -325,46 +333,78 @@ function TopPage({ characters, onSelect }) {
     characters.forEach(c => { g[c.id] = pickGreeting(c.id); });
     return g;
   });
-  const IMG_H = 160;
+  const orbs = [
+    { size: 340, color: "rgba(167,139,250,0.10)", pos: { top: "-80px", left: "-100px" }, anim: "nagiDrift 16s ease-in-out infinite" },
+    { size: 300, color: "rgba(244,114,182,0.08)", pos: { top: "35%", right: "-120px" }, anim: "nagiDrift 20s ease-in-out infinite reverse" },
+    { size: 280, color: "rgba(251,146,60,0.07)", pos: { bottom: "-60px", left: "-60px" }, anim: "nagiDrift 18s ease-in-out infinite" },
+  ];
+  const DOT_COLORS = ["#a78bfa", "#f472b6", "#fb923c"];
   return (
-    <div style={{ height:"100vh",width:"100vw",background:"linear-gradient(160deg,#0a0a0f 0%,#12121a 40%,#0f0f18 100%)",display:"flex",flexDirection:"column",alignItems:"center",fontFamily:FONT,overflow:"auto" }}>
-      <div style={{ paddingTop:"min(8vh, 48px)",marginBottom:"28px",textAlign:"center" }}>
-        <h1 style={{ fontSize:"22px",fontWeight:700,color:"#e4e4e7",marginBottom:"8px",letterSpacing:"0.08em" }}>ナギChat</h1>
-        <p style={{ fontSize:"12px",color:"#52525b",margin:0 }}>会いたい人を選んでね</p>
-      </div>
-      <div style={{ display:"flex",flexDirection:"column",gap:"16px",padding:"0 16px 32px",width:"min(420px, 92vw)" }}>
-        {characters.map(c => {
-          const isHover = hoverId === c.id;
-          const isDim = hoverId && !isHover;
-          return (
-            <div key={c.id}
-              onMouseEnter={() => setHoverId(c.id)} onMouseLeave={() => setHoverId(null)}
-              onClick={() => onSelect(c.id)}
-              style={{
-                width:"100%",borderRadius:"18px",overflow:"hidden",cursor:"pointer",position:"relative",
-                border:`1.5px solid ${isHover?c.accent+"80":"rgba(255,255,255,0.06)"}`,
-                boxShadow:isHover?`0 8px 32px ${c.accent}30, 0 0 20px ${c.accent}15`:"0 4px 20px rgba(0,0,0,0.4)",
-                transform:isHover?"translateY(-3px) scale(1.01)":"translateY(0) scale(1)",
-                opacity:isDim?0.4:1,
-                transition:"all 0.35s cubic-bezier(0.4,0,0.2,1)",
-                background:"#16161e",
-              }}>
-              <div style={{
-                width:"100%",height:IMG_H,
-                background:`linear-gradient(135deg, ${c.accent}18, ${c.accent}08)`,
-                display:"flex",alignItems:"center",justifyContent:"center",
-                filter:isHover?"brightness(1.2) saturate(1.3)":"brightness(0.6) saturate(0.3)",
-                transition:"filter 0.35s ease",overflow:"hidden",
-              }}>
-                <span style={{ fontSize:"56px",opacity:isHover?1:0.5,transition:"opacity 0.35s ease" }}>{c.icon}</span>
+    <div style={{ minHeight:"100vh",width:"100vw",background:"#0a0a0f",fontFamily:FONT,overflowY:"auto",overflowX:"hidden",position:"relative" }}>
+      {orbs.map((o, i) => (
+        <div key={i} style={{ position:"fixed",width:o.size+"px",height:o.size+"px",borderRadius:"50%",background:o.color,filter:"blur(90px)",pointerEvents:"none",zIndex:0,animation:o.anim,...o.pos }}/>
+      ))}
+      <div style={{ position:"relative",zIndex:1,maxWidth:"440px",margin:"0 auto",padding:"min(9vh, 64px) 18px 40px",display:"flex",flexDirection:"column",minHeight:"100vh" }}>
+
+        {/* ── ヘッダー: 三色紋章ドット + グラデ看板 ── */}
+        <div style={{ textAlign:"center",marginBottom:"30px",animation:"nagiCardIn 0.5s ease-out both" }}>
+          <div style={{ display:"flex",gap:"7px",justifyContent:"center",marginBottom:"14px" }}>
+            {DOT_COLORS.map((c, i) => (
+              <span key={i} style={{ width:"7px",height:"7px",borderRadius:"50%",background:c,boxShadow:"0 0 10px " + c + "b0" }}/>
+            ))}
+          </div>
+          <h1 style={{
+            fontSize:"27px",fontWeight:700,letterSpacing:"0.18em",margin:0,fontFamily:FONT,
+            background:"linear-gradient(115deg,#c4b5fd 0%,#f9a8d4 35%,#fdba74 65%,#c4b5fd 100%)",
+            backgroundSize:"250% 100%",
+            WebkitBackgroundClip:"text",backgroundClip:"text",
+            WebkitTextFillColor:"transparent",color:"transparent",
+            animation:"nagiShine 8s linear infinite",
+            filter:"drop-shadow(0 0 16px rgba(196,181,253,0.28))",
+          }}>nagiChat</h1>
+          <p style={{ fontSize:"12px",color:"#5b5b66",marginTop:"8px",letterSpacing:"0.05em" }}>今日は、誰に会いに行く？</p>
+        </div>
+
+        {/* ── キャラカード(トーク一覧型) ── */}
+        <div style={{ display:"flex",flexDirection:"column",gap:"14px" }}>
+          {characters.map((c, idx) => {
+            const t = THEMES[c.id] || THEMES.nagi;
+            const ac = t.accent, acl = t.accentLight;
+            const isHover = hoverId === c.id;
+            return (
+              <div key={c.id}
+                onMouseEnter={() => setHoverId(c.id)} onMouseLeave={() => setHoverId(null)}
+                onClick={() => onSelect(c.id)}
+                style={{
+                  position:"relative",display:"flex",alignItems:"center",gap:"14px",
+                  padding:"16px",borderRadius:"20px",cursor:"pointer",
+                  background:isHover ? ac + "0d" : "rgba(255,255,255,0.025)",
+                  border:"1.5px solid " + (isHover ? ac + "99" : ac + "1f"),
+                  boxShadow:isHover ? "0 8px 28px rgba(0,0,0,0.4), 0 0 24px " + ac + "30" : "0 4px 20px rgba(0,0,0,0.35)",
+                  transform:isHover ? "translateY(-2px)" : "translateY(0)",
+                  transition:"all 0.3s cubic-bezier(0.4,0,0.2,1)",
+                  animation:"nagiCardIn 0.5s ease-out " + (0.08 * (idx + 1)) + "s both",
+                  WebkitTapHighlightColor:"transparent",
+                }}>
+                <div style={{ position:"relative",flexShrink:0 }}>
+                  <Avatar src={c.avatar} size={58} border={"2px solid " + ac + "80"} />
+                  <span style={{ position:"absolute",bottom:"1px",right:"1px",width:"12px",height:"12px",borderRadius:"50%",background:ac,border:"2.5px solid #101016",animation:"nagiPresence 2.4s ease-in-out infinite" }}/>
+                </div>
+                <div style={{ flex:1,minWidth:0 }}>
+                  <div style={{ display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px" }}>
+                    <span style={{ fontSize:"15px",fontWeight:700,color:ac,fontFamily:FONT }}>{c.name}</span>
+                    <span style={{ fontSize:"9px",padding:"2px 8px",borderRadius:"8px",background:ac + "24",color:acl,fontWeight:500,letterSpacing:"0.06em",fontFamily:FONT }}>{CHAR_CHIPS[c.id] || ""}</span>
+                  </div>
+                  <div style={{ fontSize:"12px",color:"#8b8b96",lineHeight:"1.65",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:FONT }}>{greetings[c.id]}</div>
+                </div>
+                <span style={{ color:isHover ? ac : "#3a3a44",fontSize:"18px",flexShrink:0,transition:"all 0.3s",transform:isHover ? "translateX(2px)" : "none" }}>›</span>
               </div>
-              <div style={{ padding:"12px 16px" }}>
-                <span style={{ fontSize:"15px",fontWeight:700,color:isHover?c.accent:"#a1a1aa",transition:"color 0.3s" }}>{c.name}</span>
-                <p style={{ fontSize:"12px",color:"#71717a",margin:"6px 0 0",lineHeight:"1.5" }}>{greetings[c.id]}</p>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+
+        {/* ── フッター ── */}
+        <div style={{ textAlign:"center",marginTop:"auto",paddingTop:"36px",fontSize:"10px",color:"#3a3a42",letterSpacing:"0.1em",fontFamily:FONT,animation:"nagiCardIn 0.6s 0.35s ease-out both" }}>— いつでも、ここにいるよ —</div>
       </div>
     </div>
   );
