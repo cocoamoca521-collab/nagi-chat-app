@@ -432,6 +432,16 @@ function HeartIcon({ color, size }) {
   );
 }
 
+// ═══ Plus Icon SVG ═══
+function PlusIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
 // ═══ Thinking Block ═══
 function ThinkingBlock({ thinking, thinkingRequested, theme }) {
   const [open, setOpen] = useState(false);
@@ -828,6 +838,7 @@ function NagiChat() {
   const [editingMemory, setEditingMemory] = useState(false);
   const [memoryDraft, setMemoryDraft] = useState("");
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [attachHover, setAttachHover] = useState(false);
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const chatAreaRef = useRef(null);
@@ -1771,7 +1782,24 @@ function NagiChat() {
         )}
         <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleImageSelect} style={{ display:"none" }} />
         <div style={{ display:"flex",gap:"8px",alignItems:"flex-end",maxWidth:"720px",margin:"0 auto" }}>
-          <button onClick={() => fileRef.current?.click()} disabled={loading} style={{ width:"44px",height:"44px",borderRadius:"14px",border:"none",background:`${theme.accent}08`,color:"#71717a",fontSize:"18px",cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.2s" }}>📎</button>
+          <button onClick={() => fileRef.current?.click()} disabled={loading}
+            onMouseEnter={() => setAttachHover(true)} onMouseLeave={() => setAttachHover(false)}
+            onFocus={() => setAttachHover(true)} onBlur={() => setAttachHover(false)}
+            style={{
+              width:"44px",height:"44px",borderRadius:"14px",border:"none",background:`${theme.accent}08`,
+              cursor:loading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+              flexShrink:0,position:"relative",transition:"all 0.2s",
+              boxShadow: attachHover ? `0 0 12px ${theme.accent}50` : "none",
+            }}>
+            <span style={{ display:"flex",transform: attachedImages.length>0 ? "rotate(45deg)" : "rotate(0deg)",transition:"transform 0.25s" }}>
+              <PlusIcon color={theme.accent + (attachHover ? "" : "66")} size={20} />
+            </span>
+            {attachedImages.length > 0 && (
+              <span style={{ position:"absolute",top:"-4px",right:"-4px",minWidth:"16px",height:"16px",padding:"0 3px",borderRadius:"50%",background:theme.userGradient,color:"#fff",fontSize:"9px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,fontFamily:FONT }}>
+                {attachedImages.length}
+              </span>
+            )}
+          </button>
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder={settings.apiKey ? theme.placeholder : "⚙️ まずAPIキーを設定してね"}
             disabled={!settings.apiKey||loading} rows={1}
