@@ -502,11 +502,22 @@ function HamburgerIcon({ color, size }) {
 }
 
 // ═══ Search Icon SVG (検索) ═══
-function SearchIcon({ color, size }) {
+function SearchIcon({ color, size, strokeWidth }) {
   return (
-    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round">
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth={strokeWidth||2.5} strokeLinecap="round">
       <circle cx="10.5" cy="10.5" r="6.5" />
       <line x1="15.5" y1="15.5" x2="20.5" y2="20.5" />
+    </svg>
+  );
+}
+
+// ═══ Bubble Icon SVG (思考) ═══
+function BubbleIcon({ color, size, strokeWidth }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth={strokeWidth||2.5} strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="12.5" cy="9.5" rx="7.5" ry="6" />
+      <circle cx="6" cy="17.5" r="1.3" fill={color||"#fff"} stroke="none" />
+      <circle cx="3.2" cy="20.5" r="0.8" fill={color||"#fff"} stroke="none" />
     </svg>
   );
 }
@@ -549,7 +560,7 @@ function ThinkingBlock({ thinking, thinkingRequested, theme }) {
         color: isEmpty ? "#eab308" : t.accentLight,
         fontFamily: FONT, transition: "all 0.2s", userSelect: "none",
       }}>
-        <span>{isEmpty ? "🌱" : "💭"}</span>
+        <span style={{ display:"inline-flex",alignItems:"center" }}>{isEmpty ? "🌱" : <BubbleIcon color={t.accentLight} size={13} />}</span>
         <span style={{ fontWeight: 500 }}>{isEmpty ? "ECO — 思考スキップ" : "Thinking"}</span>
         <span style={{ transform: open ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.25s", fontSize: "9px" }}>▼</span>
       </div>
@@ -766,7 +777,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
           <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.thinkingEnabled?t.userGradient:"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
             <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left:s.thinkingEnabled?"20px":"2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
           </div>
-          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{s.thinkingEnabled?"ON — 思考を見る 💭":"OFF — 高速応答"}</span>
+          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT,display:"inline-flex",alignItems:"center",gap:"5px" }}>{s.thinkingEnabled?<>ON — 思考を見る <BubbleIcon color={t.accentLight} size={13} /></>:"OFF — 高速応答"}</span>
         </div>
         {s.thinkingEnabled && (
           <div style={{ marginTop:"14px",animation:"fadeIn 0.2s ease-out" }}>
@@ -796,7 +807,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
           <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.webSearch?"linear-gradient(135deg, #059669, #34d399)":"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
             <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left:s.webSearch?"20px":"2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
           </div>
-          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{s.webSearch?"ON — 検索できる 🔍":"OFF"}</span>
+          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT,display:"inline-flex",alignItems:"center",gap:"5px" }}>{s.webSearch?<>ON — 検索できる <SearchIcon color="#34d399" size={13} /></>:"OFF"}</span>
         </div>
         <label style={{...labelStyle,marginTop:"22px"}}>データ管理</label>
         <div style={{ display:"flex",gap:"8px" }}>
@@ -921,7 +932,7 @@ function StatusBadges({ model, effort, thinkingEnabled, webSearch }) {
     <div style={{ display:"flex",gap:"4px",flexWrap:"wrap" }}>
       <span style={bs(m.color)}>{m.label}</span>
       {thinkingEnabled && <span style={bs(e.color)}>{e.icon}{e.label}</span>}
-      {webSearch && <span style={bs("#34d399")}>🔍</span>}
+      {webSearch && <span style={bs("#34d399")}><SearchIcon color="#34d399" size={11} strokeWidth={3} /></span>}
     </div>
   );
 }
