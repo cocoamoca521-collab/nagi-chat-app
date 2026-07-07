@@ -645,6 +645,35 @@ function ThinkingBlock({ thinking, thinkingRequested, theme }) {
   );
 }
 
+// ═══ Generated Images Block（tool_use画像生成の結果）═══
+function GeneratedImagesBlock({ images, theme, onExpand, showLabel }) {
+  const t = theme || THEMES.nagi;
+  if (!images?.length) return null;
+  return (
+    <div style={{ marginBottom: "8px", maxWidth: "82%" }}>
+      {showLabel && (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: "7px",
+          padding: "7px 14px", borderRadius: "14px",
+          background: t.thinkingBg, border: `1.5px solid ${t.thinkingBorder}`,
+          fontSize: "12px", color: t.accentLight, fontFamily: FONT,
+          marginBottom: "6px", userSelect: "none",
+        }}>
+          <span>🎨</span><span style={{ fontWeight: 500 }}>制作</span>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+        {images.map((img, idx) => {
+          const src = img.fullBase64 ? "data:image/png;base64," + img.fullBase64 : (img.preview || img.url);
+          return (
+            <img key={idx} src={src} onClick={() => onExpand(img)} style={{ maxWidth:"240px", maxHeight:"240px", borderRadius:"16px", border:`1px solid ${t.bubbleBorder}`, cursor:"pointer" }} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ═══ Message Bubble ═══
 async function saveGeneratedImage(img) {
   const src = img.fullBase64 ? "data:image/png;base64," + img.fullBase64 : (img.preview || img.url);
@@ -669,6 +698,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit }) {
   const t = theme || THEMES.nagi;
   const [showUsageDetail, setShowUsageDetail] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);
+  const segmentedThinking = !isUser && Array.isArray(msg.thinking);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: "18px", animation: "fadeIn 0.25s ease-out" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px", flexDirection: isUser ? "row-reverse" : "row", paddingLeft: isUser ? 0 : "4px", paddingRight: isUser ? "4px" : 0 }}>
@@ -677,7 +707,11 @@ function MessageBubble({ msg, theme, charAvatar, onEdit }) {
           {isUser ? "多恵子" : (msg.charName || "ナギ")}
         </span>
       </div>
-      {!isUser && <ThinkingBlock thinking={msg.thinking} thinkingRequested={msg.thinkingRequested} theme={t} />}
+      {!isUser && (
+        segmentedThinking
+          ? <ThinkingBlock thinking={msg.thinking[0]} thinkingRequested={msg.thinkingRequested} theme={t} />
+          : <ThinkingBlock thinking={msg.thinking} thinkingRequested={msg.thinkingRequested} theme={t} />
+      )}
       {msg.images?.length > 0 && (
         <div style={{ display:"flex", gap:"4px", flexWrap:"wrap", maxWidth:"82%", marginBottom:"4px" }}>
           {msg.images.map((img, idx) => (
@@ -685,15 +719,13 @@ function MessageBubble({ msg, theme, charAvatar, onEdit }) {
           ))}
         </div>
       )}
-      {msg.generatedImages?.length > 0 && (
-        <div style={{ display:"flex", gap:"4px", flexWrap:"wrap", maxWidth:"82%", marginBottom:"4px" }}>
-          {msg.generatedImages.map((img, idx) => {
-            const src = img.fullBase64 ? "data:image/png;base64," + img.fullBase64 : (img.preview || img.url);
-            return (
-              <img key={idx} src={src} onClick={() => setExpandedImg(img)} style={{ maxWidth:"240px", maxHeight:"240px", borderRadius:"16px", border:`1px solid ${t.bubbleBorder}`, cursor:"pointer" }} />
-            );
-          })}
-        </div>
+      {segmentedThinking ? (
+        <>
+          <GeneratedImagesBlock images={msg.generatedImages} theme={t} onExpand={setExpandedImg} showLabel />
+          {msg.thinking.length > 1 && <ThinkingBlock thinking={msg.thinking[1]} thinkingRequested={msg.thinkingRequested} theme={t} />}
+        </>
+      ) : (
+        <GeneratedImagesBlock images={msg.generatedImages} theme={t} onExpand={setExpandedImg} />
       )}
       {expandedImg && (
         <div onClick={() => setExpandedImg(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, animation:"fadeIn 0.15s ease-out" }}>
@@ -1445,6 +1477,22 @@ function NagiChat() {
     return stripped;
   }
 
+  // ── 表示用thinkingの正規化（tool_use往復で複数セグメントになる場合は配列のまま保持）──
+  // 文字列（旧形式）はそのまま、配列は中身が全部空ならnullにする
+  function normalizeThinkingForDisplay(streamThinking) {
+    if (Array.isArray(streamThinking)) {
+      const hasAny = streamThinking.some(s => s && s.trim());
+      return hasAny ? streamThinking : null;
+    }
+    return streamThinking || null;
+  }
+
+  // ── thinking（文字列 or 配列）をプレーンテキストに変換（エクスポート用）──
+  function thinkingToPlainText(thinking) {
+    if (Array.isArray(thinking)) return thinking.filter(s => s && s.trim()).join("\n\n──\n\n");
+    return thinking || "";
+  }
+
   // ── contentブロックからcache_controlを除去（保存済みデータへの残存を防ぐ）──
   function stripCacheControl(msg) {
     if (!Array.isArray(msg.content)) return msg;
@@ -1834,7 +1882,7 @@ function NagiChat() {
           apiMessagesForStorage = [assistantToolUseMsg, toolResultMsg, { role:"assistant", content:result2.fullContent }];
           result = {
             streamText: (result.streamText ? result.streamText + "\n\n" : "") + result2.streamText,
-            streamThinking: [result.streamThinking, result2.streamThinking].filter(Boolean).join("\n\n"),
+            streamThinking: [result.streamThinking || "", result2.streamThinking || ""],
             fullContent: result2.fullContent,
             usage: result2.usage,
             modelActual: result2.modelActual,
@@ -1847,7 +1895,7 @@ function NagiChat() {
       const usage = result.usage;
       const finalMsg = {
         role:"assistant", content:result.streamText || "……ごめん、うまく言葉が出てこない。",
-        thinking:result.streamThinking||null, thinkingRequested:settings.thinkingEnabled,
+        thinking:normalizeThinkingForDisplay(result.streamThinking), thinkingRequested:settings.thinkingEnabled,
         timestamp:aTs,
         charIcon:activeChar.icon, charName:activeChar.name,
         modelRequested:settings.model, modelActual:result.modelActual,
@@ -1954,7 +2002,8 @@ function NagiChat() {
       const name = m.role === "user" ? "多恵子" : (m.charIcon||"") + " " + (m.charName||"");
       const model = m.modelActual ? " [" + m.modelActual.replace("claude-","") + "]" : "";
       text += "[" + time + "] " + name.trim() + model + "\n" + m.content + "\n";
-      if (m.thinking) text += "\n  💭 Thinking:\n  " + m.thinking.split("\n").join("\n  ") + "\n";
+      const thinkingText = thinkingToPlainText(m.thinking);
+      if (thinkingText) text += "\n  💭 Thinking:\n  " + thinkingText.split("\n").join("\n  ") + "\n";
       text += "\n";
     });
     const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
