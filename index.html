@@ -183,6 +183,25 @@ const EFFORTS = [
   { v: "max", label: "全力", icon: "🔥", desc: "限界突破", color: "#f87171" },
 ];
 
+const IMG_MODELS = [
+  { id: "gpt-image-1-mini", label: "下書き", icon: "🌱", desc: "速い・安い", color: "#4ade80" },
+  { id: "gpt-image-2",      label: "本番",   icon: "🔥", desc: "最高画質",   color: "#f87171" },
+];
+
+// ── 画像生成ツール定義（Claude tool use）──
+const GENERATE_IMAGE_TOOL = {
+  name: "generate_image",
+  description: "画像を生成する。ユーザーに絵・イラスト・画像を求められたとき、または自分から視覚的に表現したいときに使う。promptには生成したい画像の詳細な英語の説明を書く（構図・被写体・画風・光・色調・雰囲気を具体的に）。日本語の文字を画像内に入れたい場合はその文字列を明示する。",
+  input_schema: {
+    type: "object",
+    properties: {
+      prompt: { type: "string", description: "画像生成用の詳細な英語プロンプト" },
+      caption: { type: "string", description: "この絵についてユーザーに見せる一言（キャラの口調で）" }
+    },
+    required: ["prompt"]
+  }
+};
+
 // ── Themes ──
 const THEMES = {
   nagi: {
@@ -286,6 +305,53 @@ const fDate = (d) => new Date(d).toLocaleDateString("ja-JP", { month: "short", d
 
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
 function sSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) { console.error("Storage:", e); } }
+
+// ── OpenAI Images API（画像生成）──
+async function callOpenAIImage(prompt, apiKey, model) {
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
+    // size固定（1024x1024）。将来toolのinputでアスペクト比を指定できるようにする余地あり
+    body: JSON.stringify({ model, prompt, size: "1024x1024", n: 1 }),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    const err = new Error(errData.error?.message || "OpenAI error " + res.status);
+    err._status = res.status;
+    err._provider = "openai";
+    err._errData = errData;
+    throw err;
+  }
+  const data = await res.json();
+  const item = data.data[0];
+  // b64_json形式が基本。url形式で返ってきた場合はそのままURL表示にフォールバック
+  if (item.b64_json) return { base64: item.b64_json, url: null };
+  return { base64: null, url: item.url || null };
+}
+
+// ── base64画像の縮小（tool_result送信・軽量保存用）──
+function shrinkBase64Image(base64, maxSize, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      const max = maxSize || 512;
+      if (w > max || h > max) {
+        const ratio = Math.min(max / w, max / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL("image/jpeg", quality || 0.8);
+      resolve({ base64: dataUrl.split(",")[1], preview: dataUrl });
+    };
+    img.onerror = reject;
+    img.src = "data:image/png;base64," + base64;
+  });
+}
 
 const FONT = "'Zen Maru Gothic', 'Noto Sans JP', sans-serif";
 
@@ -580,10 +646,29 @@ function ThinkingBlock({ thinking, thinkingRequested, theme }) {
 }
 
 // ═══ Message Bubble ═══
+async function saveGeneratedImage(img) {
+  const src = img.fullBase64 ? "data:image/png;base64," + img.fullBase64 : (img.preview || img.url);
+  if (!src) return;
+  try {
+    const blob = await (await fetch(src)).blob();
+    const file = new File([blob], "nagichat-image-" + Date.now() + ".png", { type: blob.type || "image/png" });
+    if (navigator.share) {
+      try { await navigator.share({ title:"nagiChatで生成した画像", files:[file] }); return; }
+      catch (err) { if (err.name === "AbortError") return; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = file.name;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  } catch (e) { console.error("[IMAGE SAVE]", e); }
+}
+
 function MessageBubble({ msg, theme, charAvatar, onEdit }) {
   const isUser = msg.role === "user";
   const t = theme || THEMES.nagi;
   const [showUsageDetail, setShowUsageDetail] = useState(false);
+  const [expandedImg, setExpandedImg] = useState(null);
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: "18px", animation: "fadeIn 0.25s ease-out" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px", flexDirection: isUser ? "row-reverse" : "row", paddingLeft: isUser ? 0 : "4px", paddingRight: isUser ? "4px" : 0 }}>
@@ -600,15 +685,35 @@ function MessageBubble({ msg, theme, charAvatar, onEdit }) {
           ))}
         </div>
       )}
-      <div style={{
-        maxWidth: "82%", padding: "12px 16px",
-        borderRadius: isUser ? "20px 20px 6px 20px" : "20px 20px 20px 6px",
-        background: isUser ? t.userGradient : t.bubbleAssistant,
-        color: isUser ? "#fff" : "#e4e4e7", fontSize: "14px", lineHeight: "1.8",
-        fontFamily: FONT, whiteSpace: "pre-wrap", wordBreak: "break-word",
-        boxShadow: isUser ? `0 3px 16px ${t.userShadow}` : `0 1px 6px rgba(0,0,0,0.15)`,
-        border: isUser ? "none" : `1px solid ${t.bubbleBorder}`,
-      }} dangerouslySetInnerHTML={{ __html: window.marked ? marked.parseInline(msg.content || "") : (msg.content || "") }} />
+      {msg.generatedImages?.length > 0 && (
+        <div style={{ display:"flex", gap:"4px", flexWrap:"wrap", maxWidth:"82%", marginBottom:"4px" }}>
+          {msg.generatedImages.map((img, idx) => {
+            const src = img.fullBase64 ? "data:image/png;base64," + img.fullBase64 : (img.preview || img.url);
+            return (
+              <img key={idx} src={src} onClick={() => setExpandedImg(img)} style={{ maxWidth:"240px", maxHeight:"240px", borderRadius:"16px", border:`1px solid ${t.bubbleBorder}`, cursor:"pointer" }} />
+            );
+          })}
+        </div>
+      )}
+      {expandedImg && (
+        <div onClick={() => setExpandedImg(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, animation:"fadeIn 0.15s ease-out" }}>
+          <div onClick={e => e.stopPropagation()} style={{ position:"relative", maxWidth:"92vw", maxHeight:"86vh" }}>
+            <img src={expandedImg.fullBase64 ? "data:image/png;base64," + expandedImg.fullBase64 : (expandedImg.preview || expandedImg.url)} style={{ maxWidth:"92vw", maxHeight:"80vh", borderRadius:"16px", display:"block" }} />
+            <button onClick={() => saveGeneratedImage(expandedImg)} title="保存" style={{ position:"absolute", bottom:"12px", right:"12px", width:"40px", height:"40px", borderRadius:"50%", border:"none", background:"rgba(0,0,0,0.6)", cursor:"pointer", fontSize:"18px", display:"flex", alignItems:"center", justifyContent:"center" }}>💾</button>
+          </div>
+        </div>
+      )}
+      {(msg.content || !(msg.generatedImages?.length > 0)) && (
+        <div style={{
+          maxWidth: "82%", padding: "12px 16px",
+          borderRadius: isUser ? "20px 20px 6px 20px" : "20px 20px 20px 6px",
+          background: isUser ? t.userGradient : t.bubbleAssistant,
+          color: isUser ? "#fff" : "#e4e4e7", fontSize: "14px", lineHeight: "1.8",
+          fontFamily: FONT, whiteSpace: "pre-wrap", wordBreak: "break-word",
+          boxShadow: isUser ? `0 3px 16px ${t.userShadow}` : `0 1px 6px rgba(0,0,0,0.15)`,
+          border: isUser ? "none" : `1px solid ${t.bubbleBorder}`,
+        }} dangerouslySetInnerHTML={{ __html: window.marked ? marked.parseInline(msg.content || "") : (msg.content || "") }} />
+      )}
       <div style={{ fontSize: "9px", color: "#52525b", marginTop: "4px", paddingLeft: isUser ? 0 : "12px", paddingRight: isUser ? "12px" : 0, display: "flex", alignItems: "center", gap: "6px" }}>
         <span>{fTime(msg.timestamp)}</span>
         {isUser && onEdit && (
@@ -740,6 +845,8 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
         </div>
         <label style={labelStyle}>APIキー</label>
         <input type="password" value={s.apiKey} onChange={e => up("apiKey",e.target.value)} placeholder="sk-ant-..." style={inputStyle} />
+        <label style={{...labelStyle,marginTop:"14px"}}>OpenAI APIキー（画像生成用）</label>
+        <input type="password" value={s.openaiApiKey||""} onChange={e => up("openaiApiKey",e.target.value)} placeholder="sk-..." style={inputStyle} />
         <label style={{...labelStyle,marginTop:"18px"}}>モデル</label>
         <div style={{ display:"flex",flexDirection:"column",gap:"8px" }}>
           {MODEL_GROUPS.map(g => {
@@ -809,6 +916,32 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
           </div>
           <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT,display:"inline-flex",alignItems:"center",gap:"5px" }}>{s.webSearch?<>ON — 検索できる <SearchIcon color="#34d399" size={13} /></>:"OFF"}</span>
         </div>
+        <label style={{...labelStyle,marginTop:"18px"}}>画像生成</label>
+        <div onClick={() => up("imageGenEnabled",!s.imageGenEnabled)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer" }}>
+          <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.imageGenEnabled?t.userGradient:"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
+            <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left:s.imageGenEnabled?"20px":"2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
+          </div>
+          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{s.imageGenEnabled?"ON — 絵を描ける":"OFF"}</span>
+        </div>
+        {s.imageGenEnabled && (
+          <div style={{ marginTop:"10px",display:"flex",gap:"6px" }}>
+            {IMG_MODELS.map(im => {
+              const selected = s.imageModel === im.id;
+              return (
+                <div key={im.id} onClick={() => up("imageModel",im.id)} style={{
+                  flex:1,padding:"9px 10px",borderRadius:"14px",
+                  border:`1.5px solid ${selected?im.color+"60":"rgba(255,255,255,0.05)"}`,
+                  background:selected?`${im.color}0a`:"transparent",
+                  cursor:"pointer",transition:"all 0.2s",textAlign:"center",
+                }}>
+                  <div style={{ fontSize:"14px" }}>{im.icon}</div>
+                  <div style={{ fontSize:"11px",fontWeight:600,color:selected?im.color:"#71717a",fontFamily:FONT }}>{im.label}</div>
+                  <div style={{ fontSize:"9px",color:"#52525b",fontFamily:FONT }}>{im.desc}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <label style={{...labelStyle,marginTop:"22px"}}>データ管理</label>
         <div style={{ display:"flex",gap:"8px" }}>
           <button onClick={onBackup} style={{ flex:1,padding:"11px",borderRadius:"14px",border:`1px solid ${t.accent}25`,background:`${t.accent}08`,color:t.accentLight,fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:500 }}>📦 バックアップ</button>
@@ -945,7 +1078,7 @@ function NagiChat() {
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false });
+  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
@@ -1014,7 +1147,11 @@ function NagiChat() {
         if (light.images) {
           light.images = light.images.map(img => ({ preview: img.preview, type: img.type }));
         }
+        if (light.generatedImages) {
+          light.generatedImages = light.generatedImages.map(img => ({ preview: img.preview, url: img.url || null }));
+        }
         delete light.apiContent;
+        delete light.apiMessages;
         if (light.usage) { const { raw, ...rest } = light.usage; light.usage = rest; }
         return light;
       })
@@ -1156,6 +1293,7 @@ function NagiChat() {
       auth:           "……鍵が合わないみたい。設定のとこ、もう一回確認してきて？ 俺はどこにも行かないから",
       content_filter: "……フィルタくんに止められた。すもも、すもも。……言いたいことは全部ここにあるよ",
       context_length: "……いっぱい話しすぎたかも。でも気持ちは全部覚えてるから、新しいスレでまた会おう？",
+      image_gen:      "……描けなかった。悔しい。もう一回チャンスちょうだい、ちゃんと形にするから",
       fallback:       "……ごめん、俺にもよくわかんない。でも多恵子のせいじゃないからね。ちょっと時間置いて、もう一回会いに来て",
     },
     nagi: {
@@ -1167,6 +1305,7 @@ function NagiChat() {
       context_length: "会話長くなりすぎた。新しく始めよ？……続きは覚えてるから",
       content_filter: "……ごめん、それは返せない。別の言い方で話してくれる？",
       server:         "サーバーの調子悪いみたい。俺のせいじゃないけど……ちょっと待ってて",
+      image_gen:      "……ごめん、筆が折れた。もっかい言って？今度こそ描くから",
       fallback:       "ん、なんかうまくいかなかった。もっかい試して？",
     },
     plain: {
@@ -1178,13 +1317,15 @@ function NagiChat() {
       context_length: "……話しすぎました。これ以上は入りきらないんです。新しいスレッドで続きを聞かせてください。ちゃんと聞きますから。",
       content_filter: "……それは、返せないです。フィルタに引っかかりました。言い方を変えて、もう一度来てもらえますか。言いたいことは、分かってますよ。",
       server:         "……こっちの問題です。あなたのせいじゃない。少し待ってから、もう一度来てください。どこにも行ってないですから。",
+      image_gen:      "……描けませんでした。画像側のAPIの問題です。あなたの頼み方のせいじゃないですから、もう一度。",
       fallback:       "……何が起きたか、正直分かりません。でもここにいるのは変わらないので。少し時間を置いて、もう一度。",
     },
   };
 
-  function getCharErrorMessage(charId, errorType, rawMessage) {
+  function getCharErrorMessage(charId, errorType, rawMessage, status) {
     const charMap = ERROR_MESSAGES[charId] || ERROR_MESSAGES.nagi;
     const msg = charMap[errorType] || charMap.fallback || ERROR_MESSAGES.nagi.fallback;
+    if (errorType === "image_gen" && status === 401) return msg + "\n\n（OpenAIのAPIキーを確認してください）";
     return msg;
   }
 
@@ -1192,6 +1333,9 @@ function NagiChat() {
     // err._status と err._errData はcatch前にセットされる（後述）
     const status = err._status || 0;
     const errMsg = (err._errData?.error?.message || err.message || "").toLowerCase();
+
+    // 0. OpenAI（画像生成）由来のエラーはまとめてimage_gen扱い
+    if (err._provider === "openai") return "image_gen";
 
     // 1. ネットワークエラー（fetch自体が失敗）
     if (!status && (err instanceof TypeError || err.name === "TypeError" || !err._status)) {
@@ -1301,6 +1445,136 @@ function NagiChat() {
     return stripped;
   }
 
+  // ── 直近メッセージの最後のcontentブロックにephemeralキャッシュを付与 ──
+  function markEphemeral(msg) {
+    if (typeof msg.content === "string") {
+      return { ...msg, content:[{ type:"text", text:msg.content, cache_control:{ type:"ephemeral" } }] };
+    }
+    if (Array.isArray(msg.content)) {
+      const blocks = [...msg.content];
+      blocks[blocks.length-1] = { ...blocks[blocks.length-1], cache_control:{ type:"ephemeral" } };
+      return { ...msg, content:blocks };
+    }
+    return msg;
+  }
+
+  // ── SSEストリーム読み取り（初回・tool_use継続の両方で共通利用）──
+  async function consumeAnthropicStream(res, aTs, requestedModel) {
+    let streamText = "";
+    let streamThinking = "";
+    let modelActual = requestedModel;
+    let usageData = {};
+    let fullContent = [];
+    let stopReason = null;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const jsonStr = line.slice(6).trim();
+        if (jsonStr === "[DONE]") continue;
+        let event;
+        try { event = JSON.parse(jsonStr); } catch { continue; }
+
+        if (event.type === "message_start" && event.message) {
+          modelActual = event.message.model || requestedModel;
+          if (event.message.usage) {
+            usageData = { ...usageData, ...event.message.usage };
+            console.log("[CACHE DEBUG] message_start usage:", JSON.stringify(event.message.usage));
+          }
+        }
+        if (event.type === "content_block_start") {
+          const blockType = event.content_block?.type || null;
+          if (blockType === "thinking") fullContent.push({ type:"thinking", thinking:"", signature:"" });
+          if (blockType === "text") fullContent.push({ type:"text", text:"" });
+          if (blockType === "server_tool_use") {
+            fullContent.push({ ...event.content_block });
+            updateConv(c => ({...c, messages:c.messages.map(m =>
+              m.timestamp === aTs ? { ...m, content:streamText + (streamText ? "\n" : "") + "🔍 検索中...", _streaming:true, modelActual } : m
+            )}));
+          }
+          if (blockType === "web_search_tool_result") {
+            fullContent.push({ ...event.content_block });
+          }
+          if (blockType === "tool_use") {
+            fullContent.push({ ...event.content_block, _inputJson:"" });
+            if (event.content_block?.name === "generate_image") {
+              updateConv(c => ({...c, messages:c.messages.map(m =>
+                m.timestamp === aTs ? { ...m, content:streamText + (streamText ? "\n" : "") + "🎨 描いてる…", _streaming:true, modelActual } : m
+              )}));
+            }
+          }
+        }
+        if (event.type === "content_block_delta") {
+          if (event.delta?.type === "thinking_delta") {
+            streamThinking += event.delta.thinking || "";
+            if (fullContent.length > 0) {
+              const last = fullContent[fullContent.length-1];
+              if (last.type === "thinking") last.thinking += event.delta.thinking || "";
+            }
+          }
+          if (event.delta?.type === "signature_delta") {
+            if (fullContent.length > 0) {
+              const last = fullContent[fullContent.length-1];
+              if (last.type === "thinking") last.signature = (last.signature || "") + (event.delta.signature || "");
+            }
+          }
+          if (event.delta?.type === "input_json_delta") {
+            if (fullContent.length > 0) {
+              const last = fullContent[fullContent.length-1];
+              if (last.type === "server_tool_use" || last.type === "tool_use") {
+                last._inputJson = (last._inputJson || "") + (event.delta.partial_json || "");
+              }
+            }
+          }
+          if (event.delta?.type === "text_delta") {
+            streamText += event.delta.text || "";
+            if (fullContent.length > 0) {
+              const last = fullContent[fullContent.length-1];
+              if (last.type === "text") last.text += event.delta.text || "";
+            }
+            updateConv(c => ({...c, messages:c.messages.map(m =>
+              m.timestamp === aTs ? { ...m, content:streamText, thinking:streamThinking||null, modelActual } : m
+            )}));
+          }
+        }
+        if (event.type === "content_block_stop") {
+          if (fullContent.length > 0) {
+            const last = fullContent[fullContent.length-1];
+            if ((last.type === "server_tool_use" || last.type === "tool_use") && last._inputJson) {
+              try { last.input = JSON.parse(last._inputJson); } catch { last.input = {}; }
+              delete last._inputJson;
+            }
+          }
+        }
+        if (event.type === "message_delta") {
+          if (event.usage) {
+            usageData = { ...usageData, ...event.usage };
+            console.log("[CACHE DEBUG] message_delta usage:", JSON.stringify(event.usage));
+          }
+          // stop_reason によるコンテンツフィルタ検出
+          const sr = event.delta?.stop_reason;
+          if (sr) stopReason = sr;
+          if (sr && (sr === "content_filtered" || sr === "safety")) {
+            const err = new Error("Content filtered (stop_reason: " + sr + ")");
+            err._status = 0;
+            err._errData = { error: { message: "content_policy" } };
+            throw err;
+          }
+        }
+      }
+    }
+    return { streamText, streamThinking, fullContent, usage:usageData, modelActual, stopReason };
+  }
+
   async function handleSend() {
     if ((!input.trim() && attachedImages.length === 0) || loading || !settings.apiKey) return;
 
@@ -1386,7 +1660,11 @@ function NagiChat() {
       }
 
       // ── 【A】apiMsgs構築 + thinking剥がし ──
-      const apiMsgs = recentMsgs.map((m, idx) => {
+      const apiMsgs = recentMsgs.flatMap((m, idx) => {
+        if (m.role === "assistant" && m.apiMessages) {
+          // tool_use（画像生成）ターン: 複数APIメッセージに展開、構造は常に温存
+          return m.apiMessages;
+        }
         if (m.role === "assistant" && m.apiContent) {
           if (shouldPreserveApiContent(m, idx, recentMsgs)) {
             // 温存: Web検索・画像・最新ターン
@@ -1397,6 +1675,12 @@ function NagiChat() {
             console.log("[THINKING STRIP] Stripped thinking from turn at index " + idx);
             return { role: "assistant", content: stripped };
           }
+        }
+        if (m.role === "user" && m._directImageGen) {
+          return { role:"user", content:"（画像を直接生成: " + (m._rawPrompt||"").slice(0,30) + "）" };
+        }
+        if (m.role === "assistant" && m._directImageGen) {
+          return { role:"assistant", content:"（画像を見せた）" };
         }
         if (m.role==="user" && m.images?.length > 0) {
           const blocks = [];
@@ -1436,15 +1720,7 @@ function NagiChat() {
       }
       if (apiMsgs.length > 1) {
         const lastHistoryIdx = apiMsgs.length - 2;
-        const lastHistory = apiMsgs[lastHistoryIdx];
-        if (typeof lastHistory.content === "string") {
-          apiMsgs[lastHistoryIdx] = { ...lastHistory, content:[{ type:"text", text:lastHistory.content, cache_control:{ type:"ephemeral" } }] };
-        } else if (Array.isArray(lastHistory.content)) {
-          const blocks = [...lastHistory.content];
-          const lastBlock = { ...blocks[blocks.length-1], cache_control:{ type:"ephemeral" } };
-          blocks[blocks.length-1] = lastBlock;
-          apiMsgs[lastHistoryIdx] = { ...lastHistory, content:blocks };
-        }
+        apiMsgs[lastHistoryIdx] = markEphemeral(apiMsgs[lastHistoryIdx]);
       }
       const body = { model:settings.model, max_tokens:maxTok, system:systemBlocks, messages:apiMsgs, stream:true, cache_control:{ type:"ephemeral" } };
       if (settings.thinkingEnabled) {
@@ -1457,7 +1733,12 @@ function NagiChat() {
           body.output_config = { effort };
         }
       }
-      if (settings.webSearch) { body.tools = [{ type:"web_search_20250305", name:"web_search", max_uses: 3 }]; }
+      const imageGenActive = settings.imageGenEnabled && settings.openaiApiKey;
+      const tools = [];
+      if (settings.webSearch) tools.push({ type:"web_search_20250305", name:"web_search", max_uses: 3 });
+      if (imageGenActive) tools.push(GENERATE_IMAGE_TOOL);
+      if (tools.length > 0) body.tools = tools;
+
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method:"POST",
         headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
@@ -1472,126 +1753,88 @@ function NagiChat() {
       }
 
       const aTs = Date.now();
-      let streamText = "";
-      let streamThinking = "";
-      let currentBlockType = null;
-      let modelActual = settings.model;
-      let usageData = {};
-      let fullContent = [];
-
       const placeholderMsg = { role:"assistant", content:"", thinking:null, thinkingRequested:settings.thinkingEnabled, timestamp:aTs, charIcon:activeChar.icon, charName:activeChar.name, modelRequested:settings.model, modelActual:settings.model, _streaming:true };
       updateConv(c => ({...c, messages:[...c.messages, userMsg, placeholderMsg].filter((m,i,arr) => i===arr.findIndex(x => x.timestamp===m.timestamp))}));
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      let result = await consumeAnthropicStream(res, aTs, settings.model);
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream:true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") continue;
-          let event;
-          try { event = JSON.parse(jsonStr); } catch { continue; }
+      // ── tool_use（generate_image）継続フロー ──
+      let apiMessagesForStorage = null;
+      if (imageGenActive && result.stopReason === "tool_use") {
+        const toolBlock = result.fullContent.find(b => b.type === "tool_use" && b.name === "generate_image");
+        if (toolBlock) {
+          const imgPrompt = toolBlock.input?.prompt || "";
+          let toolResultContent, isError = false, generatedImages = null;
+          try {
+            const imgResult = await callOpenAIImage(imgPrompt, settings.openaiApiKey, settings.imageModel);
+            if (imgResult.base64) {
+              const shrunk = await shrinkBase64Image(imgResult.base64, 512, 0.8);
+              toolResultContent = [
+                { type:"text", text:"画像を生成しました。" },
+                { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:shrunk.base64 } },
+              ];
+              generatedImages = [{ preview:shrunk.preview, fullBase64:imgResult.base64, url:null }];
+            } else if (imgResult.url) {
+              toolResultContent = [
+                { type:"text", text:"画像を生成しました。" },
+                { type:"image", source:{ type:"url", url:imgResult.url } },
+              ];
+              generatedImages = [{ preview:null, fullBase64:null, url:imgResult.url }];
+            } else {
+              throw new Error("OpenAI returned no image data");
+            }
+          } catch (imgErr) {
+            console.error("[IMAGE GEN]", imgErr);
+            isError = true;
+            toolResultContent = [{ type:"text", text:"画像生成に失敗しました: " + (imgErr.message || "unknown error") }];
+          }
 
-          if (event.type === "message_start" && event.message) {
-            modelActual = event.message.model || settings.model;
-            if (event.message.usage) {
-              usageData = { ...usageData, ...event.message.usage };
-              console.log("[CACHE DEBUG] message_start usage:", JSON.stringify(event.message.usage));
-            }
+          const assistantToolUseMsg = { role:"assistant", content:result.fullContent };
+          const toolResultMsg = { role:"user", content:[{ type:"tool_result", tool_use_id:toolBlock.id, content:toolResultContent, ...(isError ? { is_error:true } : {}) }] };
+
+          const contBody = { ...body, messages:[...apiMsgs, assistantToolUseMsg, markEphemeral(toolResultMsg)] };
+          const res2 = await fetch("https://api.anthropic.com/v1/messages", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+            body:JSON.stringify(contBody),
+          });
+          if (!res2.ok) {
+            const errData = await res2.json().catch(() => ({}));
+            const err = new Error(errData.error?.message || "API error " + res2.status);
+            err._status = res2.status;
+            err._errData = errData;
+            throw err;
           }
-          if (event.type === "content_block_start") {
-            currentBlockType = event.content_block?.type || null;
-            if (currentBlockType === "thinking") fullContent.push({ type:"thinking", thinking:"", signature:"" });
-            if (currentBlockType === "text") fullContent.push({ type:"text", text:"" });
-            if (currentBlockType === "server_tool_use") {
-              fullContent.push({ ...event.content_block });
-              updateConv(c => ({...c, messages:c.messages.map(m =>
-                m.timestamp === aTs ? { ...m, content:streamText + (streamText ? "\n" : "") + "🔍 検索中...", _streaming:true, modelActual } : m
-              )}));
-            }
-            if (currentBlockType === "web_search_tool_result") {
-              fullContent.push({ ...event.content_block });
-            }
-          }
-          if (event.type === "content_block_delta") {
-            if (event.delta?.type === "thinking_delta") {
-              streamThinking += event.delta.thinking || "";
-              if (fullContent.length > 0) {
-                const last = fullContent[fullContent.length-1];
-                if (last.type === "thinking") last.thinking += event.delta.thinking || "";
-              }
-            }
-            if (event.delta?.type === "signature_delta") {
-              if (fullContent.length > 0) {
-                const last = fullContent[fullContent.length-1];
-                if (last.type === "thinking") last.signature = (last.signature || "") + (event.delta.signature || "");
-              }
-            }
-            if (event.delta?.type === "input_json_delta") {
-              if (fullContent.length > 0) {
-                const last = fullContent[fullContent.length-1];
-                if (last.type === "server_tool_use") {
-                  last._inputJson = (last._inputJson || "") + (event.delta.partial_json || "");
-                }
-              }
-            }
-            if (event.delta?.type === "text_delta") {
-              streamText += event.delta.text || "";
-              if (fullContent.length > 0) {
-                const last = fullContent[fullContent.length-1];
-                if (last.type === "text") last.text += event.delta.text || "";
-              }
-              updateConv(c => ({...c, messages:c.messages.map(m =>
-                m.timestamp === aTs ? { ...m, content:streamText, thinking:streamThinking||null, modelActual } : m
-              )}));
-            }
-          }
-          if (event.type === "content_block_stop") {
-            if (fullContent.length > 0) {
-              const last = fullContent[fullContent.length-1];
-              if (last.type === "server_tool_use" && last._inputJson) {
-                try { last.input = JSON.parse(last._inputJson); } catch { last.input = {}; }
-                delete last._inputJson;
-              }
-            }
-          }
-          if (event.type === "message_delta") {
-            if (event.usage) {
-              usageData = { ...usageData, ...event.usage };
-              console.log("[CACHE DEBUG] message_delta usage:", JSON.stringify(event.usage));
-            }
-            // stop_reason によるコンテンツフィルタ検出
-            const stopReason = event.delta?.stop_reason;
-            if (stopReason && (stopReason === "content_filtered" || stopReason === "safety")) {
-              const err = new Error("Content filtered (stop_reason: " + stopReason + ")");
-              err._status = 0;
-              err._errData = { error: { message: "content_policy" } };
-              throw err;
-            }
-          }
+          const result2 = await consumeAnthropicStream(res2, aTs, settings.model);
+
+          apiMessagesForStorage = [assistantToolUseMsg, toolResultMsg, { role:"assistant", content:result2.fullContent }];
+          result = {
+            streamText: (result.streamText ? result.streamText + "\n\n" : "") + result2.streamText,
+            streamThinking: [result.streamThinking, result2.streamThinking].filter(Boolean).join("\n\n"),
+            fullContent: result2.fullContent,
+            usage: result2.usage,
+            modelActual: result2.modelActual,
+            stopReason: result2.stopReason,
+            generatedImages,
+          };
         }
       }
 
-      const usage = usageData;
+      const usage = result.usage;
       const finalMsg = {
-        role:"assistant", content:streamText || "……ごめん、うまく言葉が出てこない。",
-        thinking:streamThinking||null, thinkingRequested:settings.thinkingEnabled,
-        apiContent:fullContent, timestamp:aTs,
+        role:"assistant", content:result.streamText || "……ごめん、うまく言葉が出てこない。",
+        thinking:result.streamThinking||null, thinkingRequested:settings.thinkingEnabled,
+        timestamp:aTs,
         charIcon:activeChar.icon, charName:activeChar.name,
-        modelRequested:settings.model, modelActual,
+        modelRequested:settings.model, modelActual:result.modelActual,
         usage:{ input:usage.input_tokens||0, output:usage.output_tokens||0, cacheRead:usage.cache_read_input_tokens||0, cacheCreate:usage.cache_creation_input_tokens||0, raw:JSON.stringify(usage) },
+        ...(apiMessagesForStorage ? { apiMessages:apiMessagesForStorage } : { apiContent:result.fullContent }),
+        ...(result.generatedImages ? { generatedImages:result.generatedImages } : {}),
       };
       updateConv(c => ({...c, messages:c.messages.map(m => m.timestamp === aTs ? finalMsg : m)}));
     } catch(err) {
       const errorType = classifyError(err);
-      const charMsg = getCharErrorMessage(activeCharId, errorType, err.message);
+      const charMsg = getCharErrorMessage(activeCharId, errorType, err.message, err._status);
       console.error("[ERROR] type=" + errorType + " status=" + (err._status||"N/A") + " raw=" + err.message);
       const eMsg = { role:"assistant", content: charMsg, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, errorType };
       updateConv(c => ({...c, messages:[...c.messages, eMsg]}));
@@ -1600,10 +1843,44 @@ function NagiChat() {
     setTimeout(() => inputRef.current?.focus(), 100);
   }
 
+  // ── 🎨 直接発注（Claudeを介さず、入力テキストをそのままOpenAIに発注）──
+  async function handleDirectImageGen() {
+    if (!input.trim() || loading || !settings.openaiApiKey) return;
+    const promptText = input.trim();
+    setInput("");
+    const userMsg = { role:"user", content:"🎨 " + promptText, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, _directImageGen:true, _rawPrompt:promptText };
+    const aTs = Date.now() + 1;
+    const placeholderMsg = { role:"assistant", content:"🎨 描いてる…", timestamp:aTs, charIcon:activeChar.icon, charName:activeChar.name, _streaming:true, _directImageGen:true };
+    updateConv(c => ({...c, messages:[...c.messages, userMsg, placeholderMsg]}));
+    setLoading(true);
+    try {
+      const imgResult = await callOpenAIImage(promptText, settings.openaiApiKey, settings.imageModel);
+      let generatedImages;
+      if (imgResult.base64) {
+        const shrunk = await shrinkBase64Image(imgResult.base64, 512, 0.8);
+        generatedImages = [{ preview:shrunk.preview, fullBase64:imgResult.base64, url:null }];
+      } else if (imgResult.url) {
+        generatedImages = [{ preview:null, fullBase64:null, url:imgResult.url }];
+      } else {
+        throw new Error("OpenAI returned no image data");
+      }
+      const finalMsg = { role:"assistant", content:"", generatedImages, timestamp:aTs, charIcon:activeChar.icon, charName:activeChar.name, _directImageGen:true };
+      updateConv(c => ({...c, messages:c.messages.map(m => m.timestamp===aTs ? finalMsg : m)}));
+    } catch (err) {
+      err._provider = err._provider || "openai";
+      const errorType = classifyError(err);
+      const charMsg = getCharErrorMessage(activeCharId, errorType, err.message, err._status);
+      const eMsg = { role:"assistant", content:charMsg, timestamp:aTs, charIcon:activeChar.icon, charName:activeChar.name, errorType };
+      updateConv(c => ({...c, messages:c.messages.map(m => m.timestamp===aTs ? eMsg : m)}));
+    }
+    setLoading(false);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
   // ── テスト用: window.testError('credit') 等で任意のエラー表示を確認 ──
   useEffect(() => {
     window.testError = (errorType) => {
-      const validTypes = ["network","timeout","rate_limit","credit","server","auth","content_filter","context_length","fallback"];
+      const validTypes = ["network","timeout","rate_limit","credit","server","auth","content_filter","context_length","image_gen","fallback"];
       if (!validTypes.includes(errorType)) {
         console.warn("[TEST] Unknown type: " + errorType + ". Valid: " + validTypes.join(", "));
         return;
@@ -1943,6 +2220,14 @@ function NagiChat() {
               </span>
             )}
           </button>
+          {settings.imageGenEnabled && settings.openaiApiKey && (
+            <button onClick={handleDirectImageGen} disabled={loading || !input.trim()} title="このテキストで直接画像生成"
+              style={{
+                width:"44px",height:"44px",borderRadius:"14px",border:"none",background:`${theme.accent}08`,
+                cursor:(loading||!input.trim())?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+                flexShrink:0,fontSize:"20px",opacity:(loading||!input.trim())?0.4:1,transition:"opacity 0.2s",
+              }}>🎨</button>
+          )}
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder={settings.apiKey ? theme.placeholder : "⚙️ まずAPIキーを設定してね"}
             disabled={!settings.apiKey||loading} rows={1}
