@@ -1468,6 +1468,18 @@ function NagiChat() {
     return msg;
   }
 
+  // ── リクエストボディ内のcache_controlブロックを数える（デバッグ用）──
+  function countCacheControlBlocks(reqBody) {
+    const hits = [];
+    (reqBody.system || []).forEach((b, i) => { if (b?.cache_control) hits.push("system[" + i + "]"); });
+    (reqBody.messages || []).forEach((m, i) => {
+      if (Array.isArray(m.content)) {
+        m.content.forEach((b, j) => { if (b?.cache_control) hits.push("messages[" + i + "]." + m.role + ".content[" + j + "]"); });
+      }
+    });
+    return hits;
+  }
+
   // ── SSEストリーム読み取り（初回・tool_use継続の両方で共通利用）──
   async function consumeAnthropicStream(res, aTs, requestedModel) {
     let streamText = "";
@@ -1751,7 +1763,7 @@ function NagiChat() {
 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method:"POST",
-        headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+        headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true", "anthropic-beta":"interleaved-thinking-2025-05-14" },
         body:JSON.stringify(body),
       });
       if (!res.ok) {
@@ -1803,9 +1815,11 @@ function NagiChat() {
           const toolResultMsg = { role:"user", content:[{ type:"tool_result", tool_use_id:toolBlock.id, content:toolResultContent, ...(isError ? { is_error:true } : {}) }] };
 
           const contBody = { ...body, messages:[...apiMsgs, assistantToolUseMsg, markEphemeral(toolResultMsg)] };
+          const ccHits = countCacheControlBlocks(contBody);
+          console.log("[CACHE DEBUG] contBody cache_control count=" + ccHits.length, ccHits);
           const res2 = await fetch("https://api.anthropic.com/v1/messages", {
             method:"POST",
-            headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+            headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true", "anthropic-beta":"interleaved-thinking-2025-05-14" },
             body:JSON.stringify(contBody),
           });
           if (!res2.ok) {
