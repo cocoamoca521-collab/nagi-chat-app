@@ -1445,6 +1445,16 @@ function NagiChat() {
     return stripped;
   }
 
+  // ── contentブロックからcache_controlを除去（保存済みデータへの残存を防ぐ）──
+  function stripCacheControl(msg) {
+    if (!Array.isArray(msg.content)) return msg;
+    return { ...msg, content: msg.content.map(b => {
+      if (!b || typeof b !== "object" || !("cache_control" in b)) return b;
+      const { cache_control, ...rest } = b;
+      return rest;
+    }) };
+  }
+
   // ── 直近メッセージの最後のcontentブロックにephemeralキャッシュを付与 ──
   function markEphemeral(msg) {
     if (typeof msg.content === "string") {
@@ -1692,7 +1702,7 @@ function NagiChat() {
           return { role:"user", content:blocks };
         }
         return { role:m.role, content:m.content || "…" };
-      });
+      }).map(stripCacheControl);
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
       const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5"].includes(settings.model);
