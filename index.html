@@ -1526,6 +1526,7 @@ function NagiChat() {
   // ── リクエストボディ内のcache_controlブロックを数える（デバッグ用）──
   function countCacheControlBlocks(reqBody) {
     const hits = [];
+    if (reqBody.cache_control) hits.push("body(top-level, invalid location)");
     (reqBody.system || []).forEach((b, i) => { if (b?.cache_control) hits.push("system[" + i + "]"); });
     (reqBody.messages || []).forEach((m, i) => {
       if (Array.isArray(m.content)) {
@@ -1799,7 +1800,7 @@ function NagiChat() {
         const lastHistoryIdx = apiMsgs.length - 2;
         apiMsgs[lastHistoryIdx] = markEphemeral(apiMsgs[lastHistoryIdx]);
       }
-      const body = { model:settings.model, max_tokens:maxTok, system:systemBlocks, messages:apiMsgs, stream:true, cache_control:{ type:"ephemeral" } };
+      const body = { model:settings.model, max_tokens:maxTok, system:systemBlocks, messages:apiMsgs, stream:true };
       if (settings.thinkingEnabled) {
         const manualOnly = ["claude-opus-4-5-20251101","claude-sonnet-4-5-20250929"].includes(settings.model);
         const supportsManual = ["claude-opus-4-6","claude-sonnet-4-6"].includes(settings.model);
