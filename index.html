@@ -1110,6 +1110,13 @@ function NagiChat() {
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // ── 【調査用・仮設】画像生成2回目呼び出し失敗の切り分け用デバッグパネル ──
+  const [debugLogs, setDebugLogs] = useState([]);
+  const pushDebug = (line) => {
+    const stamped = "[" + new Date().toLocaleTimeString("ja-JP") + "] " + line;
+    console.log("[DEBUG PANEL]", stamped);
+    setDebugLogs(l => [...l, stamped].slice(-40));
+  };
   const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
@@ -1819,6 +1826,7 @@ function NagiChat() {
         const err = new Error(errData.error?.message || "API error " + res.status);
         err._status = res.status;
         err._errData = errData;
+        err._callStage = "call1（初回）";
         throw err;
       }
 
@@ -1865,6 +1873,7 @@ function NagiChat() {
           const contBody = { ...body, messages:[...apiMsgs, assistantToolUseMsg, markEphemeral(toolResultMsg)] };
           const ccHits = countCacheControlBlocks(contBody);
           console.log("[CACHE DEBUG] contBody cache_control count=" + ccHits.length, ccHits);
+          pushDebug("contBody cache_control count=" + ccHits.length + " " + JSON.stringify(ccHits));
           const res2 = await fetch("https://api.anthropic.com/v1/messages", {
             method:"POST",
             headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true", "anthropic-beta":"interleaved-thinking-2025-05-14" },
@@ -1875,6 +1884,7 @@ function NagiChat() {
             const err = new Error(errData.error?.message || "API error " + res2.status);
             err._status = res2.status;
             err._errData = errData;
+            err._callStage = "call2（tool_use継続）";
             throw err;
           }
           const result2 = await consumeAnthropicStream(res2, aTs, settings.model);
@@ -1908,6 +1918,11 @@ function NagiChat() {
       const errorType = classifyError(err);
       const charMsg = getCharErrorMessage(activeCharId, errorType, err.message, err._status);
       console.error("[ERROR] type=" + errorType + " status=" + (err._status||"N/A") + " raw=" + err.message);
+      // ── 【調査用・仮設】生エラーを画面に出す ──
+      const rawErrText = "stage=" + (err._callStage || "不明") + " status=" + (err._status ?? "N/A")
+        + " message=" + err.message + " errData=" + JSON.stringify(err._errData || {});
+      pushDebug("ERROR " + rawErrText);
+      alert("[調査用エラー]\n" + rawErrText);
       const eMsg = { role:"assistant", content: charMsg, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, errorType };
       updateConv(c => ({...c, messages:[...c.messages, eMsg]}));
     }
@@ -2110,6 +2125,22 @@ function NagiChat() {
   return (
     <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
       <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} />
+
+      {/* ── 【調査用・仮設】画像生成2回目呼び出し失敗の切り分け用デバッグパネル。原因特定後に削除すること ── */}
+      {debugLogs.length > 0 && (
+        <div style={{
+          position:"fixed", left:0, right:0, bottom:0, maxHeight:"42vh", overflowY:"auto",
+          background:"rgba(0,0,0,0.94)", color:"#4ade80", fontFamily:"monospace", fontSize:"10.5px",
+          padding:"10px 12px", zIndex:500, whiteSpace:"pre-wrap", wordBreak:"break-all",
+          userSelect:"text", borderTop:"2px solid #f43f5e",
+        }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"6px", position:"sticky", top:0 }}>
+            <strong style={{ color:"#f43f5e" }}>🐞 調査用ログ（仮設）</strong>
+            <button onClick={() => setDebugLogs([])} style={{ background:"#f43f5e", color:"#fff", border:"none", borderRadius:"6px", padding:"3px 10px", fontSize:"10px", cursor:"pointer" }}>クリア</button>
+          </div>
+          {debugLogs.map((l, i) => <div key={i} style={{ marginBottom:"4px" }}>{l}</div>)}
+        </div>
+      )}
       {showSettings && <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); }} onClose={() => settings.apiKey ? setShowSettings(false) : null} theme={theme} onBackup={handleBackup} onRestore={handleRestore} />}
       {restoreConfirm && (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
