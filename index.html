@@ -183,6 +183,61 @@ const EFFORTS = [
   { v: "max", label: "全力", icon: "🔥", desc: "限界突破", color: "#f87171" },
 ];
 
+// ── モデル別単価（$ / 1M tokens）──
+// in: 通常入力, out: 出力
+// キャッシュ書込 = in × 1.25（5分ephemeral）, キャッシュ読取 = in × 0.1
+const PRICING = {
+  "claude-fable-5":              { in: 10, out: 50 },
+  "claude-opus-4-8":             { in: 5,  out: 25 },
+  "claude-opus-4-7":             { in: 5,  out: 25 },
+  "claude-opus-4-6":             { in: 5,  out: 25 },
+  "claude-opus-4-5-20251101":    { in: 5,  out: 25 },
+  // Sonnet 5 は導入価格（〜2026-08-31）: $2/$10、2026-09-01以降: $3/$15
+  "claude-sonnet-5":             { in: 2,  out: 10, after20260901: { in: 3, out: 15 } },
+  "claude-sonnet-4-6":           { in: 3,  out: 15 },
+  "claude-sonnet-4-5-20250929":  { in: 3,  out: 15 },
+  "claude-haiku-4-5-20251001":   { in: 1,  out: 5 },
+};
+const PRICING_FALLBACK_ID = "claude-sonnet-4-6";
+const SONNET5_PRICE_CUTOVER = new Date("2026-09-01T00:00:00").getTime();
+
+function getPricingForModel(modelId, timestamp) {
+  let entry = PRICING[modelId];
+  const unknown = !entry;
+  if (unknown) entry = PRICING[PRICING_FALLBACK_ID];
+  if (modelId === "claude-sonnet-5" && entry.after20260901 && timestamp >= SONNET5_PRICE_CUTOVER) {
+    return { in: entry.after20260901.in, out: entry.after20260901.out, unknown };
+  }
+  return { in: entry.in, out: entry.out, unknown };
+}
+
+function calcMessageCost(usage, modelId, timestamp) {
+  const p = getPricingForModel(modelId, timestamp);
+  const cost = (usage.input||0)/1e6*p.in + (usage.output||0)/1e6*p.out
+             + (usage.cacheCreate||0)/1e6*p.in*1.25 + (usage.cacheRead||0)/1e6*p.in*0.1;
+  return { cost, unknown: p.unknown };
+}
+
+// ── 今月分の概算使用額を全conversationsから集計 ──
+function computeMonthlyUsage(conversations) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  let total = 0;
+  const byModel = {};
+  for (const conv of conversations || []) {
+    for (const m of conv.messages || []) {
+      if (m.role !== "assistant" || !m.usage || !m.timestamp || m.timestamp < monthStart) continue;
+      const modelId = m.modelActual || m.modelRequested;
+      if (!modelId) continue;
+      const { cost, unknown } = calcMessageCost(m.usage, modelId, m.timestamp);
+      total += cost;
+      if (!byModel[modelId]) byModel[modelId] = { cost: 0, unknown };
+      byModel[modelId].cost += cost;
+    }
+  }
+  return { total, byModel };
+}
+
 const IMG_MODELS = [
   { id: "gpt-image-1-mini", label: "下書き", icon: "🌱", desc: "速い・安い", color: "#4ade80" },
   { id: "gpt-image-2",      label: "本番",   icon: "🔥", desc: "最高画質",   color: "#f87171" },
@@ -392,8 +447,10 @@ function pickGreeting(charId) {
 // ── TopPage ──
 const CHAR_CHIPS = { nagi: "おおかみ", noa: "わんこ", plain: "そのまま" };
 
-function TopPage({ characters, onSelect }) {
+function TopPage({ characters, onSelect, conversations }) {
   const [hoverId, setHoverId] = useState(null);
+  const [showCostDetail, setShowCostDetail] = useState(false);
+  const monthlyUsage = computeMonthlyUsage(conversations);
   const [greetings] = useState(() => {
     const g = {};
     characters.forEach(c => { g[c.id] = pickGreeting(c.id); });
@@ -467,6 +524,21 @@ function TopPage({ characters, onSelect }) {
               </div>
             );
           })}
+        </div>
+
+        {/* ── 今月の概算使用額（控えめ） ── */}
+        <div onClick={() => setShowCostDetail(v => !v)} style={{ textAlign:"right",marginTop:"14px",fontSize:"10px",color:"#5b5b66",fontFamily:FONT,cursor:"pointer",userSelect:"none" }}>
+          今月 ≈ ${monthlyUsage.total.toFixed(2)}
+          {showCostDetail && (
+            <div style={{ marginTop:"6px",fontSize:"9px",color:"#4a4a54",lineHeight:"1.8" }}>
+              {Object.entries(monthlyUsage.byModel).sort((a,b) => b[1].cost - a[1].cost).map(([id, v]) => (
+                <div key={id}>{id.replace("claude-","")}{v.unknown ? "(?)" : ""}: ${v.cost.toFixed(2)}</div>
+              ))}
+              <div style={{ marginTop:"8px",fontSize:"8px",color:"#3a3a42",maxWidth:"240px",marginLeft:"auto",lineHeight:"1.6" }}>
+                ※アプリ経由の概算。要約用Haiku・失敗リクエスト・画像生成(OpenAI)は含みません
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── フッター ── */}
@@ -565,6 +637,18 @@ function PaletteIcon({ color, size }) {
       <circle cx="7.5" cy="10.5" r="1.1" fill={color||"#fff"} stroke="none" />
       <circle cx="12" cy="7.5" r="1.1" fill={color||"#fff"} stroke="none" />
       <circle cx="16.5" cy="10.5" r="1.1" fill={color||"#fff"} stroke="none" />
+    </svg>
+  );
+}
+
+// ═══ FileText Icon SVG (テキストファイル) ═══
+function FileTextIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a1.5 1.5 0 0 0-1.5 1.5v15A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5V7.5L14 3z" />
+      <polyline points="14,3 14,7.5 18.5,7.5" />
+      <line x1="9" y1="12" x2="15" y2="12" />
+      <line x1="9" y1="16" x2="15" y2="16" />
     </svg>
   );
 }
@@ -739,6 +823,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
   const t = theme || THEMES.nagi;
   const [showUsageDetail, setShowUsageDetail] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);
+  const [expandedFile, setExpandedFile] = useState(null);
   const [copied, setCopied] = useState(false);
   const segmentedThinking = !isUser && Array.isArray(msg.thinking);
   const canCopy = !msg._streaming && !!(msg.content && msg.content.trim());
@@ -797,6 +882,35 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
           <div onClick={e => e.stopPropagation()} style={{ position:"relative", maxWidth:"92vw", maxHeight:"86vh" }}>
             <img src={expandedImg.fullBase64 ? "data:image/png;base64," + expandedImg.fullBase64 : (expandedImg.preview || expandedImg.url)} style={{ maxWidth:"92vw", maxHeight:"80vh", borderRadius:"16px", display:"block" }} />
             <button onClick={() => saveGeneratedImage(expandedImg)} title="保存" style={{ position:"absolute", bottom:"12px", right:"12px", width:"40px", height:"40px", borderRadius:"50%", border:"none", background:"rgba(0,0,0,0.6)", cursor:"pointer", fontSize:"18px", display:"flex", alignItems:"center", justifyContent:"center" }}>💾</button>
+          </div>
+        </div>
+      )}
+      {msg.files?.length > 0 && (
+        <div style={{ display:"flex", gap:"6px", flexWrap:"wrap", maxWidth:"82%", marginBottom:"4px" }}>
+          {msg.files.map((f, idx) => (
+            <div key={idx} onClick={() => setExpandedFile(f)} style={{
+              display:"flex", alignItems:"center", gap:"6px", padding:"6px 10px", borderRadius:"12px",
+              background: t.thinkingBg, border:`1px solid ${t.thinkingBorder}`, cursor:"pointer",
+              fontSize:"11px", color:t.accentLight, fontFamily:FONT, maxWidth:"220px",
+            }}>
+              <FileTextIcon color={t.accentLight} size={13} />
+              <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{f.name}</span>
+              <span style={{ opacity:0.6, flexShrink:0 }}>{Math.round(f.size/1024)}KB</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {expandedFile && (
+        <div style={overlayStyle} onClick={() => setExpandedFile(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22", borderRadius:"20px", padding:"20px", width:"min(480px, 90vw)", maxHeight:"80vh", overflowY:"auto", border:`1px solid ${t.accent}20`, boxShadow:`0 20px 60px rgba(0,0,0,0.5)` }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"12px" }}>
+              <span style={{ fontSize:"13px", fontWeight:700, color:t.accent, fontFamily:FONT }}>{expandedFile.name}</span>
+              <button onClick={() => setExpandedFile(null)} style={closeBtnStyle}
+                onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
+                <XIcon color={`${t.accent}66`} size={16} />
+              </button>
+            </div>
+            <div style={{ fontSize:"12px", color:"#d4d4d8", fontFamily:"monospace", whiteSpace:"pre-wrap", wordBreak:"break-word", lineHeight:"1.7" }}>{expandedFile.text}</div>
           </div>
         </div>
       )}
@@ -1221,6 +1335,7 @@ function NagiChat() {
     clearTimeout(longPressRef.current);
   }
   const [attachedImages, setAttachedImages] = useState([]);
+  const [attachedFiles, setAttachedFiles] = useState([]);
 
   const activeChar = characters.find(c => c.id === activeCharId) || characters[0];
   const theme = THEMES[activeCharId] || THEMES.nagi;
@@ -1263,6 +1378,12 @@ function NagiChat() {
         }
         if (light.generatedImages) {
           light.generatedImages = light.generatedImages.map(img => ({ preview: img.preview, url: img.url || null }));
+        }
+        if (light.files) {
+          light.files = light.files.map(f => ({
+            name: f.name, size: f.size,
+            text: f.text.length > 1000 ? f.text.slice(0, 1000) + "…（以下省略）" : f.text,
+          }));
         }
         delete light.apiContent;
         delete light.apiMessages;
@@ -1384,17 +1505,37 @@ function NagiChat() {
     });
   }
 
+  function readTextFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  }
+
+  const FILE_SIZE_LIMIT = 200 * 1024;
+
   async function handleImageSelect(e) {
     const files = Array.from(e.target.files || []);
     for (const file of files) {
-      if (!file.type.startsWith("image/")) continue;
-      const compressed = await compressImage(file);
-      setAttachedImages(prev => [...prev, compressed]);
+      if (file.type.startsWith("image/")) {
+        const compressed = await compressImage(file);
+        setAttachedImages(prev => [...prev, compressed]);
+      } else if (/\.(txt|md)$/i.test(file.name)) {
+        if (file.size > FILE_SIZE_LIMIT) {
+          alert("ファイルが大きすぎます（上限200KB）");
+          continue;
+        }
+        const text = await readTextFile(file);
+        setAttachedFiles(prev => [...prev, { name: file.name, size: file.size, text }]);
+      }
     }
     if (fileRef.current) fileRef.current.value = "";
   }
 
   function removeImage(idx) { setAttachedImages(prev => prev.filter((_, i) => i !== idx)); }
+  function removeFile(idx) { setAttachedFiles(prev => prev.filter((_, i) => i !== idx)); }
 
   // ── エラー種別判定 + キャラ別メッセージ ──
   const ERROR_MESSAGES = {
@@ -1505,7 +1646,8 @@ function NagiChat() {
     let transcript = "";
     for (const m of oldMessages) {
       const name = m.role === "user" ? "ユーザー" : "キャラ";
-      const text = m.content || "";
+      const filePrefix = m.files?.length ? "（添付: " + m.files.map(f => f.name).join("、") + "）" : "";
+      const text = filePrefix + (m.content || "");
       if (text) transcript += name + ": " + text + "\n";
     }
     if (!transcript.trim()) return "";
@@ -1524,7 +1666,8 @@ function NagiChat() {
       const msgs = conv.messages || [];
       for (const m of msgs) {
         const name = m.role === "user" ? "多恵子" : "キャラ";
-        const text = m.content || "";
+        const filePrefix = m.files?.length ? "（添付: " + m.files.map(f => f.name).join("、") + "）" : "";
+        const text = filePrefix + (m.content || "");
         if (text) transcript += name + ": " + text + "\n";
       }
     }
@@ -1729,7 +1872,7 @@ function NagiChat() {
   }
 
   async function handleSend() {
-    if ((!input.trim() && attachedImages.length === 0) || loading || !settings.apiKey) return;
+    if ((!input.trim() && attachedImages.length === 0 && attachedFiles.length === 0) || loading || !settings.apiKey) return;
 
     // 編集モードで確定 → このタイミングで初めて後続を削除
     if (editingMsg) {
@@ -1753,9 +1896,10 @@ function NagiChat() {
     }
 
     const msgImages = attachedImages.map(img => ({ base64: img.base64, type: img.type, preview: img.preview }));
-    const userMsg = { role:"user", content:input.trim(), timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, images:msgImages };
+    const msgFiles = attachedFiles.map(f => ({ name: f.name, size: f.size, text: f.text }));
+    const userMsg = { role:"user", content:input.trim(), timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, images:msgImages, ...(msgFiles.length > 0 ? { files:msgFiles } : {}) };
     updateConv(c => ({...c, messages:[...c.messages, userMsg]}));
-    setInput(""); setAttachedImages([]);
+    setInput(""); setAttachedImages([]); setAttachedFiles([]);
     const baseMsgs = (typeof truncatedMessages !== "undefined") ? truncatedMessages : messages;
     const allMsgsForSend = [...baseMsgs, userMsg];
     await sendFlow(allMsgsForSend, [userMsg]);
@@ -1843,12 +1987,14 @@ function NagiChat() {
         if (m.role === "assistant" && m._directImageGen) {
           return { role:"assistant", content:"（画像を見せた）" };
         }
-        if (m.role==="user" && m.images?.length > 0) {
+        if (m.role==="user" && (m.images?.length > 0 || m.files?.length > 0)) {
           const blocks = [];
-          m.images.forEach(img => {
+          (m.images||[]).forEach(img => {
             if (img.base64) blocks.push({ type:"image", source:{ type:"base64", media_type:img.type||"image/jpeg", data:img.base64 } });
           });
-          if (m.content) blocks.push({ type:"text", text:m.content });
+          const fileTagsText = (m.files||[]).map(f => `<attached_file name="${f.name}">\n${f.text}\n</attached_file>`).join("\n\n");
+          const combinedText = fileTagsText ? (fileTagsText + (m.content ? "\n\n" + m.content : "")) : m.content;
+          if (combinedText) blocks.push({ type:"text", text:combinedText });
           else if (blocks.length === 0) return { role:m.role, content:m.content || "（画像）" };
           return { role:"user", content:blocks };
         }
@@ -2207,9 +2353,9 @@ function NagiChat() {
     }
   }
 
-  const hasInput = input.trim() || attachedImages.length > 0;
+  const hasInput = input.trim() || attachedImages.length > 0 || attachedFiles.length > 0;
 
-  if (screen === "top") return <TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} />;
+  if (screen === "top") return <TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} conversations={conversations} />;
 
   return (
     <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
@@ -2373,7 +2519,7 @@ function NagiChat() {
             >キャンセル</button>
           </div>
         )}
-        {attachedImages.length > 0 && (
+        {(attachedImages.length > 0 || attachedFiles.length > 0) && (
           <div style={{ display:"flex",gap:"6px",padding:"6px 4px 8px",overflowX:"auto",maxWidth:"720px",margin:"0 auto" }}>
             {attachedImages.map((img, idx) => (
               <div key={idx} style={{ position:"relative",flexShrink:0 }}>
@@ -2384,9 +2530,20 @@ function NagiChat() {
                 </button>
               </div>
             ))}
+            {attachedFiles.map((f, idx) => (
+              <div key={idx} style={{ position:"relative",flexShrink:0,display:"flex",alignItems:"center",gap:"6px",padding:"6px 10px",borderRadius:"14px",background:`${theme.accent}10`,border:`1px solid ${theme.accent}25` }}>
+                <FileTextIcon color={`${theme.accent}aa`} size={14} />
+                <span style={{ fontSize:"11px",color:"#d4d4d8",maxWidth:"110px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:FONT }}>{f.name}</span>
+                <span style={{ fontSize:"9px",color:"#71717a",fontFamily:FONT }}>{Math.round(f.size/1024)}KB</span>
+                <button onClick={() => removeFile(idx)} style={{ background:"none",border:"none",cursor:"pointer",padding:0,display:"flex",alignItems:"center" }}
+                  onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
+                  <XIcon color={`${theme.accent}66`} size={10} />
+                </button>
+              </div>
+            ))}
           </div>
         )}
-        <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleImageSelect} style={{ display:"none" }} />
+        <input ref={fileRef} type="file" accept="image/*,.txt,.md" multiple onChange={handleImageSelect} style={{ display:"none" }} />
         <div style={{ display:"flex",gap:"8px",alignItems:"flex-end",maxWidth:"720px",margin:"0 auto" }}>
           <button onClick={() => fileRef.current?.click()} disabled={loading}
             onMouseEnter={() => setAttachHover(true)} onMouseLeave={() => setAttachHover(false)}
@@ -2397,12 +2554,12 @@ function NagiChat() {
               flexShrink:0,position:"relative",transition:"all 0.2s",
               boxShadow: attachHover ? `0 0 12px ${theme.accent}50` : "none",
             }}>
-            <span style={{ display:"flex",transform: attachedImages.length>0 ? "rotate(45deg)" : "rotate(0deg)",transition:"transform 0.25s" }}>
+            <span style={{ display:"flex",transform: (attachedImages.length+attachedFiles.length)>0 ? "rotate(45deg)" : "rotate(0deg)",transition:"transform 0.25s" }}>
               <PlusIcon color={theme.accent + (attachHover ? "" : "66")} size={20} />
             </span>
-            {attachedImages.length > 0 && (
+            {(attachedImages.length+attachedFiles.length) > 0 && (
               <span style={{ position:"absolute",top:"-4px",right:"-4px",minWidth:"16px",height:"16px",padding:"0 3px",borderRadius:"50%",background:theme.userGradient,color:"#fff",fontSize:"9px",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,fontFamily:FONT }}>
-                {attachedImages.length}
+                {attachedImages.length+attachedFiles.length}
               </span>
             )}
           </button>
