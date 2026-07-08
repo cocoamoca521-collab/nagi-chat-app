@@ -1454,7 +1454,8 @@ function NagiChat() {
   const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
-  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [showPromptEditor, setShowPromptEditor] = useState(false); // false | "char" | "room"
+  const [showPromptChoice, setShowPromptChoice] = useState(false);
   const [showProfileEditor, setShowProfileEditor] = useState(false);
   const [screen, setScreen] = useState("top");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1671,12 +1672,9 @@ function NagiChat() {
 
   function handleSwitchChar(charId, goToChat) {
     if (charId === "plain") {
+      // プレーンさんへの入口は常に部屋選択を経由する（トップページ・CharSwitcher共通）
       setActiveCharId("plain");
-      if (goToChat) { setScreen("rooms"); return; }
-      // CharSwitcher経由: 最後に使った部屋に直接入る（部屋選択画面は挟まない）
-      const plainConvs = conversations.filter(c => c.charId === "plain" && c.roomId).sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0));
-      const roomId = plainConvs[0]?.roomId || rooms[0]?.id;
-      if (roomId) enterRoom(roomId);
+      setScreen("rooms");
       return;
     }
     setActiveCharId(charId);
@@ -2585,7 +2583,20 @@ function NagiChat() {
           </div>
         </div>
       )}
-      {showPromptEditor && <PromptEditor prompt={activeChar.prompt} charName={activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
+      {showPromptEditor === "char" && <PromptEditor prompt={activeChar.prompt} charName={activeCharId==="plain" ? "共通" : activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
+      {showPromptEditor === "room" && activeRoom && <PromptEditor prompt={activeRoom.roomPrompt} charName={activeRoom.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { handleSaveRoom(activeRoom, { roomPrompt:p }); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
+      {showPromptChoice && (
+        <div style={overlayStyle} onClick={() => setShowPromptChoice(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"20px",padding:"20px",width:"min(300px, 85vw)",border:`1px solid ${theme.accent}20`,boxShadow:"0 20px 60px rgba(0,0,0,0.5)" }}>
+            <div style={{ fontSize:"14px",fontWeight:700,color:theme.accent,fontFamily:FONT,marginBottom:"14px",textAlign:"center" }}>どっちを編集する？</div>
+            <div style={{ display:"flex",flexDirection:"column",gap:"8px" }}>
+              <button onClick={() => { setShowPromptChoice(false); setShowPromptEditor("char"); }} style={{ padding:"12px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)",color:"#e4e4e7",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:600 }}>共通プロンプト</button>
+              <button onClick={() => { setShowPromptChoice(false); setShowPromptEditor("room"); }} style={{ padding:"12px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)",color:"#e4e4e7",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:600 }}>この部屋のプロンプト</button>
+            </div>
+            <button onClick={() => setShowPromptChoice(false)} style={{ width:"100%",marginTop:"10px",padding:"10px",borderRadius:"14px",border:"none",background:"transparent",color:"#71717a",fontSize:"12px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
+          </div>
+        </div>
+      )}
       {showProfileEditor && <PromptEditor prompt={userProfile} charName="共通プロフィール" charIcon="👤" onSave={p => { setUserProfile(p); setShowProfileEditor(false); }} onClose={() => setShowProfileEditor(false)} theme={theme} />}
       {deleteConfirmId && <DeleteConfirmDialog onConfirm={confirmDelete} onCancel={() => setDeleteConfirmId(null)} theme={theme} />}
 
@@ -2671,7 +2682,7 @@ function NagiChat() {
             <DropletIcon color={`${theme.accent}66`} size={18} />
             {activeConv?.inheritedMemory && <span style={{ position:"absolute",top:"-2px",right:"-2px",width:"7px",height:"7px",borderRadius:"50%",background:theme.accent,boxShadow:`0 0 6px ${theme.accent}80` }}/>}
           </button>
-          <button onClick={() => setShowPromptEditor(true)} style={headerBtnStyle} title="プロンプト編集"
+          <button onClick={() => (activeCharId==="plain" && activeRoom) ? setShowPromptChoice(true) : setShowPromptEditor("char")} style={headerBtnStyle} title="プロンプト編集"
             onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
             <PenIcon color={`${theme.accent}66`} size={18} />
           </button>
