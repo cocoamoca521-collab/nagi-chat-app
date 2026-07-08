@@ -162,7 +162,7 @@ const DEFAULT_USER_PROFILE = `【ユーザー情報】
 ・（ここにAIにやめてほしいことを書く）`;
 
 // ── Constants ──
-const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile" };
+const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile", rooms: "nagichat-rooms" };
 
 const MODELS = [
   { id: "claude-fable-5", label: "Fable 5", tag: "帰還", color: "#60a5fa" },
@@ -358,6 +358,25 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const fTime = (d) => new Date(d).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
 const fDate = (d) => new Date(d).toLocaleDateString("ja-JP", { month: "short", day: "numeric" });
 
+// ── キャラに教える「今日の日付」（分単位の時刻は含めない = キャッシュ非破壊）──
+function todayLine() {
+  const d = new Date();
+  const days = ["日","月","火","水","木","金","土"];
+  return "今日は" + d.getFullYear() + "年" + (d.getMonth()+1) + "月" + d.getDate() + "日（" + days[d.getDay()] + "）。";
+}
+
+// ── メッセージ一覧の日付セパレータ用ヘルパー ──
+function isSameDay(ts1, ts2) {
+  const d1 = new Date(ts1), d2 = new Date(ts2);
+  return d1.getFullYear()===d2.getFullYear() && d1.getMonth()===d2.getMonth() && d1.getDate()===d2.getDate();
+}
+function formatDateSeparatorText(ts) {
+  const d = new Date(ts);
+  const days = ["日","月","火","水","木","金","土"];
+  const yearPart = d.getFullYear() !== new Date().getFullYear() ? d.getFullYear() + "年" : "";
+  return "── " + yearPart + (d.getMonth()+1) + "月" + d.getDate() + "日（" + days[d.getDay()] + "） ──";
+}
+
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
 function sSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) { console.error("Storage:", e); } }
 
@@ -544,6 +563,118 @@ function TopPage({ characters, onSelect, conversations }) {
         {/* ── フッター ── */}
         <div style={{ textAlign:"center",marginTop:"auto",paddingTop:"36px",fontSize:"10px",color:"#3a3a42",letterSpacing:"0.1em",fontFamily:FONT,animation:"nagiCardIn 0.6s 0.35s ease-out both" }}>— いつでも、ここにいるよ —</div>
       </div>
+    </div>
+  );
+}
+
+// ═══ Room Edit Modal（プレーンさんの部屋の作成・編集）═══
+function RoomEditModal({ room, onSave, onClose }) {
+  const [name, setName] = useState(room?.name || "");
+  const [model, setModel] = useState(room?.model || "claude-opus-4-6");
+  const [roomPrompt, setRoomPrompt] = useState(room?.roomPrompt || "");
+  const ac = "#fb923c";
+  const canSave = name.trim().length > 0;
+  return (
+    <div style={overlayStyle}>
+      <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${ac}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${ac}08`,maxHeight:"88vh",overflowY:"auto" }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"20px" }}>
+          <h2 style={h2Style}>☁️ {room ? "部屋を編集" : "新しい部屋"}</h2>
+          <button onClick={onClose} style={closeBtnStyle}
+            onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
+            <XIcon color={`${ac}66`} size={18} />
+          </button>
+        </div>
+        <label style={labelStyle}>部屋名</label>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="例: Opus 4.6の部屋" style={inputStyle} />
+        <label style={{...labelStyle,marginTop:"18px"}}>デフォルトモデル</label>
+        <div style={{ display:"flex",flexDirection:"column",gap:"4px",maxHeight:"220px",overflowY:"auto",padding:"2px" }}>
+          {MODELS.map(m => {
+            const selected = model === m.id;
+            return (
+              <div key={m.id} onClick={() => setModel(m.id)} style={{ padding:"10px 12px",borderRadius:"12px",border:`1.5px solid ${selected?m.color+"60":"rgba(255,255,255,0.04)"}`,background:selected?`${m.color}0a`:"transparent",cursor:"pointer",display:"flex",alignItems:"center",gap:"10px",transition:"all 0.2s" }}>
+                <div style={{ width:"8px",height:"8px",borderRadius:"50%",background:selected?m.color:"rgba(255,255,255,0.1)",boxShadow:selected?`0 0 8px ${m.color}60`:"none" }}/>
+                <span style={{ fontSize:"13px",fontWeight:600,color:selected?m.color:"#a1a1aa",fontFamily:FONT }}>{m.label}</span>
+                <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{m.tag}</span>
+              </div>
+            );
+          })}
+        </div>
+        <label style={{...labelStyle,marginTop:"18px"}}>部屋プロンプト（任意）</label>
+        <textarea value={roomPrompt} onChange={e => setRoomPrompt(e.target.value)} placeholder="この部屋だけの追加指示。例：あなたはClaude Opus 4.6です／空欄のままでもOK" rows={4}
+          style={{ width:"100%",padding:"11px 14px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"#e4e4e7",fontSize:"12.5px",fontFamily:FONT,outline:"none",resize:"none",boxSizing:"border-box",lineHeight:"1.7" }} />
+        <div style={{ display:"flex",gap:"10px",marginTop:"20px" }}>
+          <button onClick={onClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
+          <button onClick={() => canSave && onSave({ name:name.trim(), model, roomPrompt })} disabled={!canSave}
+            style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:canSave?"linear-gradient(135deg, #f97316, #fb923c)":"rgba(255,255,255,0.06)",color:canSave?"#fff":"#52525b",fontSize:"13px",cursor:canSave?"pointer":"default",fontWeight:600,fontFamily:FONT }}>保存</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ Room Select（プレーンさんの部屋選択画面）═══
+function RoomSelect({ rooms, conversations, onEnter, onSaveRoom, onDeleteRoom, onBack }) {
+  const [hoverId, setHoverId] = useState(null);
+  const [editingRoom, setEditingRoom] = useState(null); // null | "new" | room object
+  const [deleteConfirmRoom, setDeleteConfirmRoom] = useState(null);
+  const ac = "#fb923c", acl = "#fdba74";
+  const roomConvCount = roomId => conversations.filter(c => c.roomId === roomId).length;
+  return (
+    <div style={{ minHeight:"100vh",width:"100vw",background:"#0a0a0f",fontFamily:FONT,overflowY:"auto",overflowX:"hidden",position:"relative" }}>
+      <div style={{ position:"relative",zIndex:1,maxWidth:"440px",margin:"0 auto",padding:"min(9vh, 64px) 18px 40px",display:"flex",flexDirection:"column",minHeight:"100vh" }}>
+        <button onClick={onBack} style={{ alignSelf:"flex-start",background:"none",border:"none",cursor:"pointer",color:acl,fontSize:"13px",fontFamily:FONT,padding:"4px 2px",marginBottom:"18px" }}>← トップへ</button>
+        <div style={{ textAlign:"center",marginBottom:"26px" }}>
+          <div style={{ fontSize:"32px",marginBottom:"10px" }}>☁️</div>
+          <h1 style={{ fontSize:"20px",fontWeight:700,color:ac,fontFamily:FONT,margin:0 }}>プレーンさんの部屋</h1>
+          <p style={{ fontSize:"12px",color:"#5b5b66",marginTop:"8px" }}>どの部屋に入る？</p>
+        </div>
+        <div style={{ display:"flex",flexDirection:"column",gap:"12px" }}>
+          {rooms.map(r => {
+            const model = MODELS.find(m => m.id === r.model);
+            const isHover = hoverId === r.id;
+            const canDelete = rooms.length > 1;
+            return (
+              <div key={r.id} onMouseEnter={() => setHoverId(r.id)} onMouseLeave={() => setHoverId(null)} onClick={() => onEnter(r.id)}
+                style={{
+                  position:"relative",display:"flex",alignItems:"center",gap:"10px",
+                  padding:"16px",borderRadius:"20px",cursor:"pointer",
+                  background:isHover ? ac+"0d" : "rgba(255,255,255,0.025)",
+                  border:"1.5px solid "+(isHover ? ac+"99" : ac+"1f"),
+                  boxShadow:isHover ? "0 8px 28px rgba(0,0,0,0.4), 0 0 24px "+ac+"30" : "0 4px 20px rgba(0,0,0,0.35)",
+                  transition:"all 0.3s cubic-bezier(0.4,0,0.2,1)",
+                }}>
+                <div style={{ flex:1,minWidth:0 }}>
+                  <div style={{ display:"flex",alignItems:"center",gap:"8px",marginBottom:"5px",flexWrap:"wrap" }}>
+                    <span style={{ fontSize:"15px",fontWeight:700,color:ac,fontFamily:FONT }}>{r.name}</span>
+                    {model && <span style={{ fontSize:"9px",padding:"2px 8px",borderRadius:"8px",background:model.color+"24",color:model.color,fontWeight:600,fontFamily:FONT }}>{model.label}</span>}
+                  </div>
+                  <div style={{ fontSize:"11px",color:"#71717a",fontFamily:FONT }}>{roomConvCount(r.id)}件の会話</div>
+                </div>
+                <button onClick={e => { e.stopPropagation(); setEditingRoom(r); }} style={{ background:"none",border:"none",cursor:"pointer",padding:"5px",display:"flex",flexShrink:0 }}
+                  onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = ac+"66"}>
+                  <PenIcon color={`${ac}66`} size={15} />
+                </button>
+                <button onClick={e => { e.stopPropagation(); canDelete && setDeleteConfirmRoom(r); }} disabled={!canDelete}
+                  style={{ background:"none",border:"none",cursor:canDelete?"pointer":"default",padding:"5px",display:"flex",flexShrink:0,opacity:canDelete?1:0.3 }}
+                  onMouseEnter={e => canDelete && (e.currentTarget.querySelector('svg').style.stroke = ac)} onMouseLeave={e => canDelete && (e.currentTarget.querySelector('svg').style.stroke = ac+"66")}>
+                  <XIcon color={`${ac}66`} size={15} />
+                </button>
+              </div>
+            );
+          })}
+          <button onClick={() => setEditingRoom("new")} style={{ width:"100%",padding:"14px",borderRadius:"18px",border:`1.5px dashed ${ac}40`,background:`${ac}08`,color:ac,fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:600 }}>+ 新しい部屋</button>
+        </div>
+      </div>
+      {editingRoom && (
+        <RoomEditModal room={editingRoom === "new" ? null : editingRoom}
+          onSave={data => { onSaveRoom(editingRoom === "new" ? null : editingRoom, data); setEditingRoom(null); }}
+          onClose={() => setEditingRoom(null)} />
+      )}
+      {deleteConfirmRoom && (
+        <DeleteConfirmDialog message="部屋の中の会話も全部消えるよ" theme={THEMES.plain}
+          onCancel={() => setDeleteConfirmRoom(null)}
+          onConfirm={() => { onDeleteRoom(deleteConfirmRoom.id); setDeleteConfirmRoom(null); }} />
+      )}
     </div>
   );
 }
@@ -972,6 +1103,15 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
 }
 
 // ═══ Typing Indicator ═══
+// ═══ Date Separator（日をまたいだ境目）═══
+function DateSeparator({ timestamp }) {
+  return (
+    <div style={{ textAlign:"center", fontSize:"10px", color:"#52525b", margin:"14px 0", fontFamily:FONT, userSelect:"none" }}>
+      {formatDateSeparatorText(timestamp)}
+    </div>
+  );
+}
+
 function TypingIndicator({ avatar, name, theme }) {
   const t = theme || THEMES.nagi;
   return (
@@ -1018,14 +1158,14 @@ function CharSwitcher({ chars, activeId, onSwitch, theme, onBackLongPressStart, 
 }
 
 // ═══ Delete Confirm Dialog ═══
-function DeleteConfirmDialog({ onConfirm, onCancel, theme }) {
+function DeleteConfirmDialog({ onConfirm, onCancel, theme, message }) {
   const t = theme || THEMES.nagi;
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
       <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5), 0 0 30px ${t.accent}10`,textAlign:"center" }}>
         <div style={{ fontSize:"32px",marginBottom:"14px" }}>🗑️</div>
         <div style={{ fontSize:"15px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,marginBottom:"8px" }}>本当に削除する？</div>
-        <div style={{ fontSize:"12px",color:"#71717a",fontFamily:FONT,marginBottom:"22px",lineHeight:"1.6" }}>この会話は元に戻せないよ</div>
+        <div style={{ fontSize:"12px",color:"#71717a",fontFamily:FONT,marginBottom:"22px",lineHeight:"1.6" }}>{message || "この会話は元に戻せないよ"}</div>
         <div style={{ display:"flex",gap:"10px" }}>
           <button onClick={onCancel} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:500,transition:"all 0.2s" }}>やめる</button>
           <button onClick={onConfirm} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:"linear-gradient(135deg, #ef4444, #f87171)",color:"#fff",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:600,transition:"all 0.2s",boxShadow:"0 3px 12px rgba(239,68,68,0.3)" }}>削除する</button>
@@ -1214,7 +1354,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
 }
 
 // ═══ Sidebar ═══
-function Sidebar({ conversations, activeId, activeChar, onSelect, onNew, onDelete, onExport, isOpen, onClose, theme }) {
+function Sidebar({ conversations, activeId, activeChar, onSelect, onNew, onDelete, onExport, isOpen, onClose, theme, room, onSwitchRoom }) {
   const [search, setSearch] = useState("");
   const t = theme || THEMES.nagi;
   const filtered = search.trim()
@@ -1236,8 +1376,14 @@ function Sidebar({ conversations, activeId, activeChar, onSelect, onNew, onDelet
         <div style={{ padding:"16px 14px 10px",borderBottom:`1px solid ${t.accent}10` }}>
           <div style={{ display:"flex",alignItems:"center",gap:"10px",padding:"10px 12px",borderRadius:"14px",background:`${t.accent}10`,border:`1px solid ${t.accent}20`,marginBottom:"10px" }}>
             <Avatar src={activeChar.avatar} size={28} border={`2px solid ${t.accent}40`} />
-            <span style={{ fontSize:"14px",fontWeight:700,color:t.accent,fontFamily:FONT }}>{activeChar.name}</span>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:"14px",fontWeight:700,color:t.accent,fontFamily:FONT,whiteSpace:"nowrap" }}>{activeChar.name}</div>
+              {room && <div style={{ fontSize:"10px",color:t.accentLight,fontFamily:FONT,opacity:0.8,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"180px" }}>{room.name}</div>}
+            </div>
           </div>
+          {room && onSwitchRoom && (
+            <button onClick={onSwitchRoom} style={{ width:"100%",padding:"8px",borderRadius:"12px",border:`1px solid ${t.accent}20`,background:"transparent",color:t.accentLight,fontSize:"11px",cursor:"pointer",fontFamily:FONT,marginBottom:"10px" }}>部屋を移動</button>
+          )}
           <div style={{ position:"relative",marginBottom:"8px" }}>
             <span style={{ position:"absolute",left:"10px",top:"50%",transform:"translateY(-50%)",display:"flex",pointerEvents:"none" }}>
               <SearchIcon color={`${t.accent}66`} size={14} />
@@ -1301,6 +1447,7 @@ function NagiChat() {
   const [conversations, setConversations] = useState([]);
   const [activeConvId, setActiveConvId] = useState(null);
   const [characters, setCharacters] = useState(DEFAULT_CHARS);
+  const [rooms, setRooms] = useState([]);
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1339,9 +1486,11 @@ function NagiChat() {
 
   const activeChar = characters.find(c => c.id === activeCharId) || characters[0];
   const theme = THEMES[activeCharId] || THEMES.nagi;
-  const charConvos = conversations.filter(c => c.charId === activeCharId);
   const activeConv = conversations.find(c => c.id === activeConvId);
   const messages = activeConv?.messages || [];
+  // プレーンさんは「現在の部屋」の会話のみ。ナギ・ノアは従来どおりcharId単位
+  const activeRoom = activeCharId === "plain" ? rooms.find(r => r.id === activeConv?.roomId) : null;
+  const charConvos = conversations.filter(c => c.charId === activeCharId && (activeCharId !== "plain" || c.roomId === activeRoom?.id));
 
   const headerBtnStyle = { background:`${theme.accent}08`,border:`1px solid ${theme.accent}15`,cursor:"pointer",padding:"7px 9px",borderRadius:"12px",transition:"all 0.2s",display:"flex",alignItems:"center",justifyContent:"center" };
   const iconBtnHover = e => { e.currentTarget.querySelector('svg').style.stroke = theme.accent; };
@@ -1349,6 +1498,17 @@ function NagiChat() {
 
   useEffect(() => {
     const sc = sGet(SK.convos), ss = sGet(SK.settings), sch = sGet(SK.chars), sp = sGet(SK.profile);
+    let sr = sGet(SK.rooms);
+    let convosToLoad = sc;
+    if (!sr || sr.length === 0) {
+      // ── 初回マイグレーション: 既存プレーンさん会話を「思い出の部屋」に集約 ──
+      const defaultRoom = { id: uid(), name: "思い出の部屋", model: "claude-opus-4-6", roomPrompt: "", createdAt: Date.now() };
+      sr = [defaultRoom];
+      if (convosToLoad?.length > 0) {
+        convosToLoad = convosToLoad.map(c => c.charId === "plain" ? { ...c, roomId: defaultRoom.id } : c);
+      }
+    }
+    setRooms(sr);
     if (ss) setSettings(prev => ({...prev,...ss}));
     else setShowSettings(true);
     if (sch?.length > 0) {
@@ -1356,10 +1516,10 @@ function NagiChat() {
       setCharacters(merged);
     }
     if (sp) setUserProfile(sp);
-    if (sc?.length > 0) {
-      setConversations(sc);
-      const nc = sc.filter(c => c.charId==="nagi");
-      setActiveConvId(nc.length > 0 ? nc[0].id : sc[0].id);
+    if (convosToLoad?.length > 0) {
+      setConversations(convosToLoad);
+      const nc = convosToLoad.filter(c => c.charId==="nagi");
+      setActiveConvId(nc.length > 0 ? nc[0].id : convosToLoad[0].id);
     } else {
       const f = { id:uid(), messages:[], charId:"nagi", charIcon:"🐺", charName:"ナギ", createdAt:Date.now(), updatedAt:Date.now() };
       setConversations([f]); setActiveConvId(f.id);
@@ -1395,21 +1555,23 @@ function NagiChat() {
   }, [conversations, initialized]);
   useEffect(() => { if (initialized) sSet(SK.chars, characters); }, [characters, initialized]);
   useEffect(() => { if (initialized) sSet(SK.profile, userProfile); }, [userProfile, initialized]);
+  useEffect(() => { if (initialized) sSet(SK.rooms, rooms); }, [rooms, initialized]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [conversations, loading]);
 
-  // ── スレッドごとにモデルを復元 ──
+  // ── スレッドごとにモデルを復元（プレーンさんの新規スレは部屋のデフォルトモデルにフォールバック）──
   useEffect(() => {
     if (!initialized || !activeConvId) return;
     const conv = conversations.find(c => c.id === activeConvId);
     if (!conv) return;
-    let restored = "claude-opus-4-6";
+    const room = conv.roomId ? rooms.find(r => r.id === conv.roomId) : null;
+    let restored = room?.model || "claude-opus-4-6";
     const msgs = conv.messages || [];
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if (m.role === "assistant" && m.modelRequested) { restored = m.modelRequested; break; }
     }
     setSettings(prev => prev.model === restored ? prev : { ...prev, model: restored });
-  }, [activeConvId, initialized]);
+  }, [activeConvId, initialized, rooms]);
 
   function handleChatScroll() {
     const el = chatAreaRef.current;
@@ -1426,17 +1588,19 @@ function NagiChat() {
 
   async function handleNewConv() {
     const newId = uid();
-    const n = { id:newId, messages:[], charId:activeCharId, charIcon:activeChar.icon, charName:activeChar.name, createdAt:Date.now(), updatedAt:Date.now() };
+    // プレーンさんは部屋単位で記憶の系譜が独立するため、roomIdを引き継ぐ
+    const currentRoomId = activeCharId === "plain" ? conversations.find(c => c.id === activeConvId)?.roomId : null;
+    const n = { id:newId, messages:[], charId:activeCharId, charIcon:activeChar.icon, charName:activeChar.name, createdAt:Date.now(), updatedAt:Date.now(), ...(currentRoomId ? { roomId: currentRoomId } : {}) };
     setConversations(prev => [n,...prev]); setActiveConvId(newId);
 
-    // ── スレ間記憶引き継ぎ ──
+    // ── スレ間記憶引き継ぎ（プレーンさんはroomId単位、ナギ・ノアはcharId単位）──
     if (!settings.apiKey) return;
-    const sameCharConvs = conversations
-      .filter(c => c.charId === activeCharId && c.id !== newId && (c.messages||[]).length >= 2)
+    const sameLineageConvs = conversations
+      .filter(c => (currentRoomId ? c.roomId === currentRoomId : c.charId === activeCharId) && c.id !== newId && (c.messages||[]).length >= 2)
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    if (sameCharConvs.length === 0) return;
+    if (sameLineageConvs.length === 0) return;
 
-    const mostRecent = sameCharConvs[0];
+    const mostRecent = sameLineageConvs[0];
 
     // ── 実験スレ: 要約せず、そのスレが受け取っていた記憶をそのまま次へ素通し ──
     if (mostRecent.skipMemory) {
@@ -1462,15 +1626,59 @@ function NagiChat() {
   function confirmDelete() {
     const id = deleteConfirmId;
     setDeleteConfirmId(null);
+    const deletedConv = conversations.find(c => c.id === id);
+    const roomId = deletedConv?.roomId;
     setConversations(prev => {
       const filtered = prev.filter(c => c.id!==id);
-      if (filtered.length===0) { const f = { id:uid(), messages:[], charId:activeCharId, charIcon:activeChar.icon, charName:activeChar.name, createdAt:Date.now(), updatedAt:Date.now() }; setActiveConvId(f.id); return [f]; }
-      if (id===activeConvId) { const sc = filtered.filter(c => c.charId===activeCharId); setActiveConvId(sc.length>0?sc[0].id:filtered[0].id); }
-      return filtered;
+      if (id !== activeConvId) return filtered;
+      const lineage = roomId ? filtered.filter(c => c.roomId === roomId) : filtered.filter(c => c.charId === activeCharId);
+      if (lineage.length > 0) { setActiveConvId(lineage[0].id); return filtered; }
+      const f = { id:uid(), messages:[], charId:activeCharId, charIcon:activeChar.icon, charName:activeChar.name, createdAt:Date.now(), updatedAt:Date.now(), ...(roomId ? { roomId } : {}) };
+      setActiveConvId(f.id);
+      return [f, ...filtered];
     });
   }
 
+  // ── 部屋に入る（会話がなければ新規作成、部屋のデフォルトモデルを適用）──
+  function enterRoom(roomId) {
+    const room = rooms.find(r => r.id === roomId);
+    if (!room) return;
+    setActiveCharId("plain");
+    const roomConvs = conversations.filter(c => c.roomId === roomId).sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0));
+    if (roomConvs.length > 0) {
+      setActiveConvId(roomConvs[0].id);
+    } else {
+      const plainChar = characters.find(c => c.id === "plain") || characters[0];
+      const n = { id:uid(), messages:[], charId:"plain", charIcon:plainChar.icon, charName:plainChar.name, roomId, createdAt:Date.now(), updatedAt:Date.now() };
+      setConversations(prev => [n, ...prev]); setActiveConvId(n.id);
+    }
+    setScreen("chat");
+  }
+
+  function handleSaveRoom(existingRoom, data) {
+    if (existingRoom) {
+      setRooms(prev => prev.map(r => r.id === existingRoom.id ? { ...r, ...data } : r));
+    } else {
+      setRooms(prev => [...prev, { id: uid(), createdAt: Date.now(), ...data }]);
+    }
+  }
+
+  function handleDeleteRoom(roomId) {
+    if (rooms.length <= 1) return;
+    setRooms(prev => prev.filter(r => r.id !== roomId));
+    setConversations(prev => prev.filter(c => c.roomId !== roomId));
+  }
+
   function handleSwitchChar(charId, goToChat) {
+    if (charId === "plain") {
+      setActiveCharId("plain");
+      if (goToChat) { setScreen("rooms"); return; }
+      // CharSwitcher経由: 最後に使った部屋に直接入る（部屋選択画面は挟まない）
+      const plainConvs = conversations.filter(c => c.charId === "plain" && c.roomId).sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0));
+      const roomId = plainConvs[0]?.roomId || rooms[0]?.id;
+      if (roomId) enterRoom(roomId);
+      return;
+    }
     setActiveCharId(charId);
     const convos = conversations.filter(c => c.charId===charId);
     if (convos.length > 0) { setActiveConvId(convos[0].id); }
@@ -2011,20 +2219,20 @@ function NagiChat() {
       if (effort === "xhigh" && !isTopOpus) effort = "max";
 
       // ── systemBlocks構築（2ブロック化）──
-      // ブロック1（安定）: キャラprompt + userProfile → キャッシュ長持ち
+      // プレーンさんの部屋にいる時だけ、部屋プロンプトをブロック1に追記（部屋にいる間は不変なのでキャッシュに乗せる）
+      const roomPromptPart = activeRoom?.roomPrompt ? "\n\n" + activeRoom.roomPrompt : "";
+
+      // ブロック1（安定）: キャラprompt + 部屋プロンプト + userProfile → キャッシュ長持ち
       const systemBlocks = [
-        { type:"text", text: activeChar.prompt + "\n\n" + userProfile, cache_control:{ type:"ephemeral" } }
+        { type:"text", text: activeChar.prompt + roomPromptPart + "\n\n" + userProfile, cache_control:{ type:"ephemeral" } }
       ];
 
-      // ブロック2（変動）: 引き継ぎ記憶 + ローリング要約
-      const currentConvForMemory = conversations.find(c => c.id === activeConvId);
-      const inheritedMemory = currentConvForMemory?.inheritedMemory || "";
-      let block2Parts = [];
+      // ブロック2（変動）: 今日の日付 + 引き継ぎ記憶 + ローリング要約（日付は絶対にブロック1に入れない = 日替わりでキャッシュ全滅を防ぐ）
+      const inheritedMemory = activeConv?.inheritedMemory || "";
+      let block2Parts = [todayLine()];
       if (inheritedMemory) block2Parts.push("## 前回までの記憶\n" + inheritedMemory);
       if (summaryText) block2Parts.push("## これまでのあらすじ\n" + summaryText);
-      if (block2Parts.length > 0) {
-        systemBlocks.push({ type:"text", text: block2Parts.join("\n\n"), cache_control:{ type:"ephemeral" } });
-      }
+      systemBlocks.push({ type:"text", text: block2Parts.join("\n\n"), cache_control:{ type:"ephemeral" } });
       if (apiMsgs.length > 1) {
         const lastHistoryIdx = apiMsgs.length - 2;
         apiMsgs[lastHistoryIdx] = markEphemeral(apiMsgs[lastHistoryIdx]);
@@ -2346,6 +2554,7 @@ function NagiChat() {
         setCharacters(merged);
       }
       if (data[SK.profile]) setUserProfile(data[SK.profile]);
+      if (data[SK.rooms]?.length > 0) setRooms(data[SK.rooms]);
       setShowSettings(false);
       console.log("[BACKUP] Restored successfully");
     } catch (err) {
@@ -2356,10 +2565,11 @@ function NagiChat() {
   const hasInput = input.trim() || attachedImages.length > 0 || attachedFiles.length > 0;
 
   if (screen === "top") return <TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} conversations={conversations} />;
+  if (screen === "rooms") return <RoomSelect rooms={rooms} conversations={conversations} onEnter={enterRoom} onSaveRoom={handleSaveRoom} onDeleteRoom={handleDeleteRoom} onBack={() => setScreen("top")} />;
 
   return (
     <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
-      <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} />
+      <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} room={activeRoom} onSwitchRoom={() => { setSidebarOpen(false); setScreen("rooms"); }} />
 
       {showSettings && <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); }} onClose={() => settings.apiKey ? setShowSettings(false) : null} theme={theme} onBackup={handleBackup} onRestore={handleRestore} />}
       {restoreConfirm && (
@@ -2441,20 +2651,21 @@ function NagiChat() {
 
       {/* Header */}
       <div style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
-        <div style={{ display:"flex",alignItems:"center",gap:"12px" }}>
-          <button onClick={() => setSidebarOpen(true)} style={{ background:"none",border:"none",cursor:"pointer",padding:"3px",display:"flex",alignItems:"center" }}
+        <div style={{ display:"flex",alignItems:"center",gap:"12px",minWidth:0,flex:1,overflow:"hidden" }}>
+          <button onClick={() => setSidebarOpen(true)} style={{ background:"none",border:"none",cursor:"pointer",padding:"3px",display:"flex",alignItems:"center",flexShrink:0 }}
             onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
             <HamburgerIcon color={`${theme.accent}66`} size={20} />
           </button>
-          <div>
+          <div style={{ minWidth:0 }}>
             <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
               <CharSwitcher chars={characters} activeId={activeCharId} onSwitch={handleSwitchChar} theme={theme} onBackLongPressStart={startBackLongPress} onBackLongPressEnd={cancelBackLongPress} />
-              <span style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent }}>{activeChar.name}</span>
+              <span style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent,whiteSpace:"nowrap" }}>{activeChar.name}</span>
             </div>
+            {activeRoom && <div style={{ fontSize:"10px",color:theme.accentLight,fontFamily:FONT,opacity:0.8,marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"150px" }}>{activeRoom.name}</div>}
             <StatusBadges model={settings.model} effort={settings.effort} thinkingEnabled={settings.thinkingEnabled} webSearch={settings.webSearch} />
           </div>
         </div>
-        <div style={{ display:"flex",gap:"5px" }}>
+        <div style={{ display:"flex",gap:"5px",flexShrink:0 }}>
           <button onClick={() => setShowMemory(true)} style={{...headerBtnStyle, position:"relative"}} title="前回の記憶"
             onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
             <DropletIcon color={`${theme.accent}66`} size={18} />
@@ -2487,10 +2698,17 @@ function NagiChat() {
           const displayMsgs = messages.filter(m => !(m._streaming && !m.content));
           const lastMsg = displayMsgs[displayMsgs.length - 1];
           const lastAssistantIdx = (lastMsg && lastMsg.role === "assistant" && !lastMsg._streaming) ? displayMsgs.length - 1 : -1;
-          return displayMsgs.map((msg, i) => (
-            <MessageBubble key={msg.timestamp+"-"+i} msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
-              isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading} />
-          ));
+          return displayMsgs.map((msg, i) => {
+            const prevMsg = displayMsgs[i - 1];
+            const showDateSeparator = !prevMsg || !isSameDay(prevMsg.timestamp, msg.timestamp);
+            return (
+              <React.Fragment key={msg.timestamp+"-"+i}>
+                {showDateSeparator && <DateSeparator timestamp={msg.timestamp} />}
+                <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
+                  isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading} />
+              </React.Fragment>
+            );
+          });
         })()}
         {loading && !(messages.some(m => m._streaming && m.content)) && <TypingIndicator avatar={activeChar.avatar} name={activeChar.name} theme={theme} />}
         <div ref={endRef} />
