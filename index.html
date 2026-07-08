@@ -528,6 +528,47 @@ function PenIcon({ color, size }) {
   );
 }
 
+// ═══ Copy Icon SVG (コピー) ═══
+function CopyIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2.5" />
+      <path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" />
+    </svg>
+  );
+}
+
+// ═══ Check Icon SVG (完了フィードバック) ═══
+function CheckIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="4,12.5 10,18.5 20,6.5" />
+    </svg>
+  );
+}
+
+// ═══ Refresh Icon SVG (再生成) ═══
+function RefreshIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+      <polyline points="20,3 20,7.5 15.5,7.5" />
+    </svg>
+  );
+}
+
+// ═══ Palette Icon SVG (画像生成) ═══
+function PaletteIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 21a9 9 0 1 1 9-9c0 2-1.5 3-3 3h-1.8a2 2 0 0 0-1.5 3.3c.5.6.3 1.7-.7 2.2A9 9 0 0 1 12 21z" />
+      <circle cx="7.5" cy="10.5" r="1.1" fill={color||"#fff"} stroke="none" />
+      <circle cx="12" cy="7.5" r="1.1" fill={color||"#fff"} stroke="none" />
+      <circle cx="16.5" cy="10.5" r="1.1" fill={color||"#fff"} stroke="none" />
+    </svg>
+  );
+}
+
 // ═══ Person Icon SVG (プロフィール) ═══
 function PersonIcon({ color, size }) {
   return (
@@ -693,12 +734,36 @@ async function saveGeneratedImage(img) {
   } catch (e) { console.error("[IMAGE SAVE]", e); }
 }
 
-function MessageBubble({ msg, theme, charAvatar, onEdit }) {
+function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled }) {
   const isUser = msg.role === "user";
   const t = theme || THEMES.nagi;
   const [showUsageDetail, setShowUsageDetail] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);
+  const [copied, setCopied] = useState(false);
   const segmentedThinking = !isUser && Array.isArray(msg.thinking);
+  const canCopy = !msg._streaming && !!(msg.content && msg.content.trim());
+  const handleCopy = async () => {
+    const text = msg.content || "";
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        throw new Error("clipboard API unavailable");
+      }
+    } catch (e) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (e2) { console.error("[COPY]", e2); return; }
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: "18px", animation: "fadeIn 0.25s ease-out" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px", flexDirection: isUser ? "row-reverse" : "row", paddingLeft: isUser ? 0 : "4px", paddingRight: isUser ? "4px" : 0 }}>
@@ -748,10 +813,25 @@ function MessageBubble({ msg, theme, charAvatar, onEdit }) {
       )}
       <div style={{ fontSize: "9px", color: "#52525b", marginTop: "4px", paddingLeft: isUser ? 0 : "12px", paddingRight: isUser ? "12px" : 0, display: "flex", alignItems: "center", gap: "6px" }}>
         <span>{fTime(msg.timestamp)}</span>
+        {canCopy && (
+          <button onClick={handleCopy} title="コピー" style={{ background:"none", border:"none", cursor:"pointer", padding:"1px 4px", borderRadius:"6px", display:"flex", alignItems:"center" }}
+            onMouseEnter={e => { if (!copied) e.currentTarget.querySelector('svg').style.stroke = t.accent; }}
+            onMouseLeave={e => { if (!copied) e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`; }}>
+            {copied ? <CheckIcon color="#4ade80" size={11} /> : <CopyIcon color={`${t.accent}66`} size={11} />}
+          </button>
+        )}
         {isUser && onEdit && (
           <button onClick={() => onEdit(msg)} style={{ background:"none", border:"none", cursor:"pointer", padding:"1px 4px", borderRadius:"6px", display:"flex", alignItems:"center" }}
             onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
             <PenIcon color={`${t.accent}66`} size={11} />
+          </button>
+        )}
+        {!isUser && isLastAssistant && onRegenerate && (
+          <button onClick={() => !regenerateDisabled && onRegenerate()} disabled={regenerateDisabled} title="もう一度生成"
+            style={{ background:"none", border:"none", cursor:regenerateDisabled?"default":"pointer", padding:"1px 4px", borderRadius:"6px", display:"flex", alignItems:"center", opacity:regenerateDisabled?0.4:1 }}
+            onMouseEnter={e => { if (!regenerateDisabled) e.currentTarget.querySelector('svg').style.stroke = t.accent; }}
+            onMouseLeave={e => { if (!regenerateDisabled) e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`; }}>
+            <RefreshIcon color={`${t.accent}66`} size={11} />
           </button>
         )}
         {!isUser && msg.modelActual && (
@@ -1124,8 +1204,10 @@ function NagiChat() {
   const [memoryDraft, setMemoryDraft] = useState("");
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [attachHover, setAttachHover] = useState(false);
+  const [paletteHover, setPaletteHover] = useState(false);
   const endRef = useRef(null);
   const inputRef = useRef(null);
+  const sendingRef = useRef(false);
   const chatAreaRef = useRef(null);
   const fileRef = useRef(null);
   const longPressRef = useRef(null);
@@ -1673,11 +1755,19 @@ function NagiChat() {
     const msgImages = attachedImages.map(img => ({ base64: img.base64, type: img.type, preview: img.preview }));
     const userMsg = { role:"user", content:input.trim(), timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, images:msgImages };
     updateConv(c => ({...c, messages:[...c.messages, userMsg]}));
-    setInput(""); setAttachedImages([]); setLoading(true);
-    try {
-      const baseMsgs = (typeof truncatedMessages !== "undefined") ? truncatedMessages : messages;
-      const allMsgs = [...baseMsgs, userMsg];
+    setInput(""); setAttachedImages([]);
+    const baseMsgs = (typeof truncatedMessages !== "undefined") ? truncatedMessages : messages;
+    const allMsgsForSend = [...baseMsgs, userMsg];
+    await sendFlow(allMsgsForSend, [userMsg]);
+  }
 
+  // ── 送信フロー本体（handleSend / handleRegenerate 共通）──
+  async function sendFlow(allMsgs, appendMsgs) {
+    if (sendingRef.current) return; // 連打による多重送信防止（loading state反映前の同期ガード）
+    sendingRef.current = true;
+    appendMsgs = appendMsgs || [];
+    setLoading(true);
+    try {
       // ── 【B】ローリング要約 ──
       let turnCount = 0;
       for (const m of allMsgs) { if (m.role === "user") turnCount++; }
@@ -1825,7 +1915,7 @@ function NagiChat() {
 
       const aTs = Date.now();
       const placeholderMsg = { role:"assistant", content:"", thinking:null, thinkingRequested:settings.thinkingEnabled, timestamp:aTs, charIcon:activeChar.icon, charName:activeChar.name, modelRequested:settings.model, modelActual:settings.model, _streaming:true };
-      updateConv(c => ({...c, messages:[...c.messages, userMsg, placeholderMsg].filter((m,i,arr) => i===arr.findIndex(x => x.timestamp===m.timestamp))}));
+      updateConv(c => ({...c, messages:[...c.messages, ...appendMsgs, placeholderMsg].filter((m,i,arr) => i===arr.findIndex(x => x.timestamp===m.timestamp))}));
 
       let result = await consumeAnthropicStream(res, aTs, settings.model);
 
@@ -1912,8 +2002,21 @@ function NagiChat() {
       const eMsg = { role:"assistant", content: charMsg, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, errorType };
       updateConv(c => ({...c, messages:[...c.messages, eMsg]}));
     }
+    sendingRef.current = false;
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
+  // ── AI再生成（最後のassistantメッセージを削除して同じ文脈で再送信）──
+  async function handleRegenerate() {
+    if (loading) return;
+    const conv = conversations.find(c => c.id === activeConvId);
+    if (!conv || !conv.messages?.length) return;
+    const lastIdx = conv.messages.length - 1;
+    if (conv.messages[lastIdx].role !== "assistant") return;
+    const historyMsgs = conv.messages.slice(0, lastIdx);
+    updateConv(c => ({...c, messages: historyMsgs}));
+    await sendFlow(historyMsgs, []);
   }
 
   // ── 🎨 直接発注（Claudeを介さず、入力テキストをそのままOpenAIに発注）──
@@ -2234,7 +2337,15 @@ function NagiChat() {
             <div style={{ fontSize:"14px",color:"#52525b",lineHeight:"1.8",fontFamily:FONT }}>{activeChar.name}との会話を始めよう</div>
           </div>
         )}
-        {messages.filter(m => !(m._streaming && !m.content)).map((msg, i) => <MessageBubble key={msg.timestamp+"-"+i} msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null} />)}
+        {(() => {
+          const displayMsgs = messages.filter(m => !(m._streaming && !m.content));
+          const lastMsg = displayMsgs[displayMsgs.length - 1];
+          const lastAssistantIdx = (lastMsg && lastMsg.role === "assistant" && !lastMsg._streaming) ? displayMsgs.length - 1 : -1;
+          return displayMsgs.map((msg, i) => (
+            <MessageBubble key={msg.timestamp+"-"+i} msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
+              isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading} />
+          ));
+        })()}
         {loading && !(messages.some(m => m._streaming && m.content)) && <TypingIndicator avatar={activeChar.avatar} name={activeChar.name} theme={theme} />}
         <div ref={endRef} />
       </div>
@@ -2297,11 +2408,15 @@ function NagiChat() {
           </button>
           {settings.imageGenEnabled && settings.openaiApiKey && (
             <button onClick={handleDirectImageGen} disabled={loading || !input.trim()} title="このテキストで直接画像生成"
+              onMouseEnter={() => setPaletteHover(true)} onMouseLeave={() => setPaletteHover(false)}
+              onFocus={() => setPaletteHover(true)} onBlur={() => setPaletteHover(false)}
               style={{
                 width:"44px",height:"44px",borderRadius:"14px",border:"none",background:`${theme.accent}08`,
                 cursor:(loading||!input.trim())?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-                flexShrink:0,fontSize:"20px",opacity:(loading||!input.trim())?0.4:1,transition:"opacity 0.2s",
-              }}>🎨</button>
+                flexShrink:0,opacity:(loading||!input.trim())?0.4:1,transition:"opacity 0.2s",
+              }}>
+              <PaletteIcon color={theme.accent + (paletteHover ? "" : "66")} size={20} />
+            </button>
           )}
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
             placeholder={settings.apiKey ? theme.placeholder : "⚙️ まずAPIキーを設定してね"}
