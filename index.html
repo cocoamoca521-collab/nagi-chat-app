@@ -2226,8 +2226,13 @@ function NagiChat() {
       ];
 
       // ブロック2（変動）: 今日の日付 + 引き継ぎ記憶 + ローリング要約（日付は絶対にブロック1に入れない = 日替わりでキャッシュ全滅を防ぐ）
+      // 日付行はスレッド最初の送信時に固定化し、以後使い回す（毎回再生成すると0:00またぎでブロック2以降のキャッシュが壊れるため）
+      const dateLine = activeConv?.dateLine || todayLine();
+      if (!activeConv?.dateLine) {
+        updateConv(c => ({ ...c, dateLine }));
+      }
       const inheritedMemory = activeConv?.inheritedMemory || "";
-      let block2Parts = [todayLine()];
+      let block2Parts = [dateLine];
       if (inheritedMemory) block2Parts.push("## 前回までの記憶\n" + inheritedMemory);
       if (summaryText) block2Parts.push("## これまでのあらすじ\n" + summaryText);
       systemBlocks.push({ type:"text", text: block2Parts.join("\n\n"), cache_control:{ type:"ephemeral" } });
