@@ -949,9 +949,10 @@ async function saveGeneratedImage(img) {
   } catch (e) { console.error("[IMAGE SAVE]", e); }
 }
 
-function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled }) {
+function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled, layoutMode }) {
   const isUser = msg.role === "user";
   const t = theme || THEMES.nagi;
+  const isFlat = !isUser && layoutMode === "flat";
   const [showUsageDetail, setShowUsageDetail] = useState(false);
   const [expandedImg, setExpandedImg] = useState(null);
   const [expandedFile, setExpandedFile] = useState(null);
@@ -1046,7 +1047,13 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
         </div>
       )}
       {(msg.content || !(msg.generatedImages?.length > 0)) && (
-        <div style={{
+        <div style={isFlat ? {
+          width: "100%", maxWidth: "100%",
+          padding: "2px 4px 0",
+          background: "none", border: "none", borderRadius: 0, boxShadow: "none",
+          color: "#e4e4e7", fontSize: "14.5px", lineHeight: "1.95",
+          fontFamily: FONT, whiteSpace: "pre-wrap", wordBreak: "break-word",
+        } : {
           maxWidth: "82%", padding: "12px 16px",
           borderRadius: isUser ? "20px 20px 6px 20px" : "20px 20px 20px 6px",
           background: isUser ? t.userGradient : t.bubbleAssistant,
@@ -1098,6 +1105,9 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
           );
         })()}
       </div>
+      {isFlat && (
+        <div style={{ height:"1px", width:"100%", background:`linear-gradient(90deg, transparent, ${t.accent}52, transparent)`, margin:"10px 0 4px" }} />
+      )}
     </div>
   );
 }
@@ -1275,6 +1285,13 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             </div>
           </div>
         )}
+        <label style={{...labelStyle,marginTop:"18px"}}>メッセージ表示</label>
+        <div onClick={() => up("messageLayout", s.messageLayout==="flat" ? "bubble" : "flat")} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer" }}>
+          <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.messageLayout==="flat"?t.userGradient:"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
+            <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left:s.messageLayout==="flat"?"20px":"2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
+          </div>
+          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{s.messageLayout==="flat" ? "全面表示 — 長文・SS向け" : "吹き出し — 会話向け"}</span>
+        </div>
         <label style={{...labelStyle,marginTop:"18px"}}>Web検索</label>
         <div onClick={() => up("webSearch",!s.webSearch)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer" }}>
           <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.webSearch?"linear-gradient(135deg, #059669, #34d399)":"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
@@ -1451,7 +1468,7 @@ function NagiChat() {
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false });
+  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false, messageLayout:"bubble" });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false); // false | "char" | "room"
@@ -2721,7 +2738,8 @@ function NagiChat() {
               <React.Fragment key={msg.timestamp+"-"+i}>
                 {showDateSeparator && <DateSeparator timestamp={msg.timestamp} />}
                 <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
-                  isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading} />
+                  isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading}
+                  layoutMode={settings.messageLayout || "bubble"} />
               </React.Fragment>
             );
           });
