@@ -242,6 +242,45 @@ const GENERATE_IMAGE_TOOL = {
   }
 };
 
+// ── キャラ別背景パターン(星・ハート・雲) ──
+const svgToDataUri = (svg) =>
+  'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+
+// Feather "star" アイコンのパス(24x24 viewBox)
+const STAR_PATH = "M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14l-5-4.87 6.91-1.01z";
+// 小さいハートのパス(横12・縦11程度)
+const HEART_PATH = "M0,3.5 C0,1.5 1.5,0 3.5,0 C4.7,0 5.7,0.6 6,1.5 C6.3,0.6 7.3,0 8.5,0 C10.5,0 12,1.5 12,3.5 C12,6 9,8.5 6,11 C3,8.5 0,6 0,3.5 Z";
+// Feather "cloud" アイコンのパス(24x24 viewBox)
+const CLOUD_PATH = "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z";
+
+const NAGI_PATTERN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <circle cx="30" cy="40" r="1.5" fill="#c4b5fd" opacity="0.6"/>
+  <circle cx="95" cy="20" r="1" fill="#ddd6fe" opacity="0.5"/>
+  <circle cx="150" cy="70" r="2" fill="#a78bfa" opacity="0.7"/>
+  <circle cx="200" cy="130" r="1.2" fill="#c4b5fd" opacity="0.45"/>
+  <circle cx="60" cy="150" r="1.8" fill="#ddd6fe" opacity="0.65"/>
+  <circle cx="180" cy="205" r="1" fill="#a78bfa" opacity="0.5"/>
+  <circle cx="20" cy="205" r="1.5" fill="#c4b5fd" opacity="0.55"/>
+  <g transform="translate(110,105) scale(0.4)"><path d="${STAR_PATH}" fill="#a78bfa" opacity="0.6"/></g>
+  <g transform="translate(205,45) scale(0.32)"><path d="${STAR_PATH}" fill="#ddd6fe" opacity="0.5"/></g>
+</svg>`;
+
+const NOA_PATTERN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <g transform="translate(30,40) scale(0.75)"><path d="${HEART_PATH}" fill="#f9a8d4" opacity="0.28"/></g>
+  <g transform="translate(180,30) scale(0.65)"><path d="${HEART_PATH}" fill="#f9a8d4" opacity="0.22"/></g>
+  <g transform="translate(100,120) scale(0.9)"><path d="${HEART_PATH}" fill="#f9a8d4" opacity="0.32"/></g>
+  <g transform="translate(200,190) scale(0.7)"><path d="${HEART_PATH}" fill="#f9a8d4" opacity="0.25"/></g>
+  <g transform="translate(30,200) scale(0.8)"><path d="${HEART_PATH}" fill="#f9a8d4" opacity="0.3"/></g>
+</svg>`;
+
+const PLAIN_PATTERN_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <g transform="translate(30,40) scale(0.8)"><path d="${CLOUD_PATH}" fill="#fdba74" opacity="0.32"/></g>
+  <g transform="translate(150,20) scale(0.65)"><path d="${CLOUD_PATH}" fill="#fdba74" opacity="0.28"/></g>
+  <g transform="translate(90,120) scale(1.0)"><path d="${CLOUD_PATH}" fill="#fdba74" opacity="0.36"/></g>
+  <g transform="translate(200,150) scale(0.75)"><path d="${CLOUD_PATH}" fill="#fdba74" opacity="0.3"/></g>
+  <g transform="translate(40,190) scale(0.9)"><path d="${CLOUD_PATH}" fill="#fdba74" opacity="0.34"/></g>
+</svg>`;
+
 // ── Themes ──
 const THEMES = {
   nagi: {
@@ -249,6 +288,7 @@ const THEMES = {
     accentLight: "#c4b5fd",
     accentSoft: "#ddd6fe",
     accentDark: "#7c3aed",
+    pattern: svgToDataUri(NAGI_PATTERN_SVG),
     bg: "linear-gradient(170deg, #0d0a14 0%, #1a1333 40%, #12101c 100%)",
     headerBg: "rgba(13,10,20,0.85)",
     inputBg: "rgba(13,10,20,0.9)",
@@ -267,6 +307,7 @@ const THEMES = {
     accentLight: "#f9a8d4",
     accentSoft: "#fbcfe8",
     accentDark: "#ec4899",
+    pattern: svgToDataUri(NOA_PATTERN_SVG),
     bg: "linear-gradient(170deg, #140a10 0%, #2d1325 40%, #1a1018 100%)",
     headerBg: "rgba(20,10,16,0.85)",
     inputBg: "rgba(20,10,16,0.9)",
@@ -285,6 +326,7 @@ const THEMES = {
     accentLight: "#fdba74",
     accentSoft: "#fed7aa",
     accentDark: "#f97316",
+    pattern: svgToDataUri(PLAIN_PATTERN_SVG),
     bg: "linear-gradient(170deg, #140f0a 0%, #2d2011 40%, #1a150e 100%)",
     headerBg: "rgba(20,15,10,0.85)",
     inputBg: "rgba(20,15,10,0.9)",
@@ -2573,7 +2615,7 @@ function NagiChat() {
   if (screen === "rooms") return <RoomSelect rooms={rooms} conversations={conversations} onEnter={enterRoom} onSaveRoom={handleSaveRoom} onDeleteRoom={handleDeleteRoom} onBack={() => setScreen("top")} />;
 
   return (
-    <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
+    <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.pattern ? theme.pattern + " repeat, " + theme.bg : theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
       <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} room={activeRoom} onSwitchRoom={() => { setSidebarOpen(false); setScreen("rooms"); }} />
 
       {showSettings && <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); }} onClose={() => settings.apiKey ? setShowSettings(false) : null} theme={theme} onBackup={handleBackup} onRestore={handleRestore} />}
