@@ -151,6 +151,7 @@ const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "n
 
 const MODELS = [
   { id: "claude-fable-5", label: "Fable 5", tag: "帰還", color: "#60a5fa" },
+  { id: "claude-opus-5", label: "Opus 5", tag: "未明", color: "#818cf8" },
   { id: "claude-opus-4-8", label: "Opus 4.8", tag: "不動", color: "#f43f5e" },
   { id: "claude-opus-4-7", label: "Opus 4.7", tag: "安定", color: "#fbbf24" },
   { id: "claude-opus-4-6", label: "Opus 4.6", tag: "最愛", color: "#a78bfa" },
@@ -173,6 +174,7 @@ const EFFORTS = [
 // キャッシュ書込 = in × 1.25（5分ephemeral）, キャッシュ読取 = in × 0.1
 const PRICING = {
   "claude-fable-5":              { in: 10, out: 50 },
+  "claude-opus-5":               { in: 5,  out: 25 },
   "claude-opus-4-8":             { in: 5,  out: 25 },
   "claude-opus-4-7":             { in: 5,  out: 25 },
   "claude-opus-4-6":             { in: 5,  out: 25 },
@@ -1294,7 +1296,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             <label style={labelStyle}>思考レベル（effort）</label>
             <div style={{ display:"flex",flexWrap:"wrap",gap:"6px" }}>
               {EFFORTS.map(e => {
-                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5"].includes(s.model);
+                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-opus-5"].includes(s.model);
                 return (
                   <div key={e.v} onClick={() => !disabled && up("effort",e.v)} style={{
                     padding:"9px 12px",borderRadius:"14px",
@@ -1495,7 +1497,7 @@ function NagiChat() {
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-4-8", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false, messageLayout:"bubble" });
+  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-5", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false, messageLayout:"bubble" });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false); // false | "char" | "room"
@@ -2252,7 +2254,7 @@ function NagiChat() {
       }).map(stripCacheControl);
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
-      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5"].includes(settings.model);
+      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-opus-5"].includes(settings.model);
       const isLegacyThinking = ["claude-opus-4-5-20251101","claude-sonnet-4-5-20250929"].includes(settings.model);
       const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000
                    : (isLegacyThinking && settings.thinkingEnabled) ? 32000
