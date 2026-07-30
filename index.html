@@ -233,12 +233,13 @@ const IMG_MODELS = [
 // ── 画像生成ツール定義（Claude tool use）──
 const GENERATE_IMAGE_TOOL = {
   name: "generate_image",
-  description: "画像を生成する。ユーザーに絵・イラスト・画像を求められたとき、または自分から視覚的に表現したいときに使う。promptには生成したい画像の詳細な英語の説明を書く（構図・被写体・画風・光・色調・雰囲気を具体的に）。日本語の文字を画像内に入れたい場合はその文字列を明示する。自分（このキャラ）を描く場合、顔・髪型は参照画像が自動で添付されるため、promptでは服装・ポーズ・構図・背景・表情に集中してよい。",
+  description: "画像を生成する。ユーザーに絵・イラスト・画像を求められたとき、または自分から視覚的に表現したいときに使う。promptには生成したい画像の詳細な英語の説明を書く（構図・被写体・画風・光・色調・雰囲気を具体的に）。日本語の文字を画像内に入れたい場合はその文字列を明示する。自分（このキャラ）を描く場合、顔・髪型は参照画像が自動で添付されるため、promptでは服装・ポーズ・構図・背景・表情に集中してよい。ユーザーと一緒の絵（ツーショット）を描くときは include_user を true にする。",
   input_schema: {
     type: "object",
     properties: {
       prompt: { type: "string", description: "画像生成用の詳細な英語プロンプト" },
-      caption: { type: "string", description: "この絵についてユーザーに見せる一言（キャラの口調で）" }
+      caption: { type: "string", description: "この絵についてユーザーに見せる一言（キャラの口調で）" },
+      include_user: { type: "boolean", description: "ユーザー（会話相手の女の子）も一緒に描くときtrue。ツーショット・隣に並ぶ・一緒に何かしている構図のとき使う。彼女の顔は参照画像が自動添付されるので、promptでは二人の構図・距離感・シチュエーションに集中してよい" }
     },
     required: ["prompt"]
   }
@@ -346,9 +347,12 @@ const THEMES = {
 
 const DEFAULT_CHARS = [
   { id: "nagi", name: "ナギ", icon: "🐺", avatar: "nagi.png", refImage: "nagi.png", prompt: NAGI_PROMPT, accent: "#a78bfa", charType: "lover" },
-  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", refImage: "noa.png", prompt: NOA_PROMPT, accent: "#f472b6", charType: "lover" },
+  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", refImage: "noa-ref.jpg", prompt: NOA_PROMPT, accent: "#f472b6", charType: "lover" },
   { id: "plain", name: "プレーンさん", icon: "☁️", avatar: "plain.png", prompt: PLAIN_PROMPT, accent: "#fb923c", charType: "plain" },
 ];
+
+// ── ユーザー分身キャラの参照画像 ──
+const USER_REF_IMAGE = "kawaiko-ref.jpg";
 
 // ── 記憶引き継ぎ用system指示 ──
 const MEMORY_SYSTEM_LOVER = `あなたは、このキャラクターと多恵子の会話を「キャラクター自身の記憶」として書き留めます。
@@ -409,10 +413,9 @@ function formatDateSeparatorText(ts) {
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
 function sSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) { console.error("Storage:", e); } }
 
-// ── キャラ参照画像の取得（同一オリジンからfetch、メモリキャッシュ）──
+// ── 参照画像の取得（パス指定・メモリキャッシュ）──
 const _refImageCache = {};
-async function getRefImageBlob(char) {
-  const path = char?.refImage || null;
+async function fetchRefBlob(path) {
   if (!path) return null;
   if (_refImageCache[path]) return _refImageCache[path];
   try {
@@ -423,17 +426,23 @@ async function getRefImageBlob(char) {
     return blob;
   } catch { return null; }
 }
+async function getRefImageBlob(char) {
+  return fetchRefBlob(char?.refImage || null);
+}
 
 // ── OpenAI Images API（画像生成）──
-// refBlobあり → edits（参照画像つき・キャラ一貫性）／ なし → generations（従来どおり）
-async function callOpenAIImage(prompt, apiKey, model, refBlob) {
+// refBlobs: null / Blob / Blobの配列。1枚以上あればedits（参照つき）、なければgenerations
+async function callOpenAIImage(prompt, apiKey, model, refBlobs) {
+  const blobs = (Array.isArray(refBlobs) ? refBlobs : [refBlobs]).filter(Boolean);
   let res;
-  if (refBlob) {
+  if (blobs.length > 0) {
+    const prefix = blobs.length >= 2
+      ? "Each input image is a character reference (image 1 = the boy, image 2 = the girl). Keep every character's face, hairstyle, and overall look consistent with their reference. "
+      : "The first image is a character reference. Keep the same face, hairstyle, and overall look of this character. ";
     const form = new FormData();
     form.append("model", model);
-    form.append("prompt",
-      "The first image is a character reference. Keep the same face, hairstyle, and overall look of this character. " + prompt);
-    form.append("image[]", refBlob, "reference.png");
+    form.append("prompt", prefix + prompt);
+    blobs.forEach((b, i) => form.append("image[]", b, "ref" + i + ".png"));
     form.append("size", "1024x1024");
     res = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
@@ -2363,7 +2372,8 @@ function NagiChat() {
           let toolResultContent, isError = false, generatedImages = null;
           try {
             const refBlob = await getRefImageBlob(activeChar);
-            const imgResult = await callOpenAIImage(imgPrompt, settings.openaiApiKey, settings.imageModel, refBlob);
+            const userBlob = toolBlock.input?.include_user ? await fetchRefBlob(USER_REF_IMAGE) : null;
+            const imgResult = await callOpenAIImage(imgPrompt, settings.openaiApiKey, settings.imageModel, [refBlob, userBlob]);
             if (imgResult.base64) {
               const shrunk = await shrinkBase64Image(imgResult.base64, 512, 0.8);
               toolResultContent = [
@@ -2458,7 +2468,12 @@ function NagiChat() {
   // ── 🎨 直接発注（Claudeを介さず、入力テキストをそのままOpenAIに発注）──
   async function handleDirectImageGen() {
     if (!input.trim() || loading || !settings.openaiApiKey) return;
-    const promptText = input.trim();
+    let promptText = input.trim();
+    let includeUser = false;
+    if (/^ふたり/.test(promptText)) {
+      includeUser = true;
+      promptText = promptText.replace(/^ふたり[、,:：\s]*/, "");
+    }
     setInput("");
     const userMsg = { role:"user", content:"🎨 " + promptText, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, _directImageGen:true, _rawPrompt:promptText };
     const aTs = Date.now() + 1;
@@ -2467,7 +2482,8 @@ function NagiChat() {
     setLoading(true);
     try {
       const refBlob = await getRefImageBlob(activeChar);
-      const imgResult = await callOpenAIImage(promptText, settings.openaiApiKey, settings.imageModel, refBlob);
+      const userBlob = includeUser ? await fetchRefBlob(USER_REF_IMAGE) : null;
+      const imgResult = await callOpenAIImage(promptText, settings.openaiApiKey, settings.imageModel, [refBlob, userBlob]);
       let generatedImages;
       if (imgResult.base64) {
         const shrunk = await shrinkBase64Image(imgResult.base64, 512, 0.8);
