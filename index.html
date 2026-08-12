@@ -179,27 +179,22 @@ const PRICING = {
   "claude-opus-4-7":             { in: 5,  out: 25 },
   "claude-opus-4-6":             { in: 5,  out: 25 },
   "claude-opus-4-5-20251101":    { in: 5,  out: 25 },
-  // Sonnet 5 は導入価格（〜2026-08-31）: $2/$10、2026-09-01以降: $3/$15
-  "claude-sonnet-5":             { in: 2,  out: 10, after20260901: { in: 3, out: 15 } },
+  "claude-sonnet-5":             { in: 2,  out: 10 },
   "claude-sonnet-4-6":           { in: 3,  out: 15 },
   "claude-sonnet-4-5-20250929":  { in: 3,  out: 15 },
   "claude-haiku-4-5-20251001":   { in: 1,  out: 5 },
 };
 const PRICING_FALLBACK_ID = "claude-sonnet-4-6";
-const SONNET5_PRICE_CUTOVER = new Date("2026-09-01T00:00:00").getTime();
 
-function getPricingForModel(modelId, timestamp) {
+function getPricingForModel(modelId) {
   let entry = PRICING[modelId];
   const unknown = !entry;
   if (unknown) entry = PRICING[PRICING_FALLBACK_ID];
-  if (modelId === "claude-sonnet-5" && entry.after20260901 && timestamp >= SONNET5_PRICE_CUTOVER) {
-    return { in: entry.after20260901.in, out: entry.after20260901.out, unknown };
-  }
   return { in: entry.in, out: entry.out, unknown };
 }
 
-function calcMessageCost(usage, modelId, timestamp) {
-  const p = getPricingForModel(modelId, timestamp);
+function calcMessageCost(usage, modelId) {
+  const p = getPricingForModel(modelId);
   const cost = (usage.input||0)/1e6*p.in + (usage.output||0)/1e6*p.out
              + (usage.cacheCreate||0)/1e6*p.in*1.25 + (usage.cacheRead||0)/1e6*p.in*0.1;
   return { cost, unknown: p.unknown };
@@ -216,7 +211,7 @@ function computeMonthlyUsage(conversations) {
       if (m.role !== "assistant" || !m.usage || !m.timestamp || m.timestamp < monthStart) continue;
       const modelId = m.modelActual || m.modelRequested;
       if (!modelId) continue;
-      const { cost, unknown } = calcMessageCost(m.usage, modelId, m.timestamp);
+      const { cost, unknown } = calcMessageCost(m.usage, modelId);
       total += cost;
       if (!byModel[modelId]) byModel[modelId] = { cost: 0, unknown };
       byModel[modelId].cost += cost;
