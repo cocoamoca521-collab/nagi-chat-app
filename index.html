@@ -2430,7 +2430,7 @@ function NagiChat() {
         thinking:normalizeThinkingForDisplay(result.streamThinking), thinkingRequested:settings.thinkingEnabled,
         timestamp:aTs,
         charIcon:activeChar.icon, charName:activeChar.name,
-        modelRequested:settings.model, modelActual:result.modelActual,
+        modelRequested:settings.model, modelActual:result.modelActual, stopReason:result.stopReason,
         usage:{ input:usage.input_tokens||0, output:usage.output_tokens||0, cacheRead:usage.cache_read_input_tokens||0, cacheCreate:usage.cache_creation_input_tokens||0, raw:JSON.stringify(usage) },
         ...(apiMessagesForStorage ? { apiMessages:apiMessagesForStorage } : { apiContent:result.fullContent }),
         ...(result.generatedImages ? { generatedImages:result.generatedImages } : {}),
