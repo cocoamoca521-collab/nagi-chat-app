@@ -1880,8 +1880,8 @@ function NagiChat() {
     // 0. OpenAI（画像生成）由来のエラーはまとめてimage_gen扱い
     if (err._provider === "openai") return "image_gen";
 
-    // 1. ネットワークエラー（fetch自体が失敗）
-    if (!status && (err instanceof TypeError || err.name === "TypeError" || !err._status)) {
+    // 1. ネットワークエラー（fetch自体が失敗。_statusが一度もセットされていない = レスポンスすら受け取れていない）
+    if (!status && (err instanceof TypeError || err.name === "TypeError" || err._status === undefined)) {
       return "network";
     }
     // 2. タイムアウト
@@ -2147,7 +2147,7 @@ function NagiChat() {
           // stop_reason によるコンテンツフィルタ検出
           const sr = event.delta?.stop_reason;
           if (sr) stopReason = sr;
-          if (sr && (sr === "content_filtered" || sr === "safety")) {
+          if (sr && (sr === "content_filtered" || sr === "safety" || sr === "refusal")) {
             const err = new Error("Content filtered (stop_reason: " + sr + ")");
             err._status = 0;
             err._errData = { error: { message: "content_policy" } };
