@@ -150,6 +150,7 @@ const DEFAULT_USER_PROFILE = `【ユーザー情報】
 const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile", rooms: "nagichat-rooms" };
 
 const MODELS = [
+  { id: "claude-fable-5-1", label: "Fable 5.1", tag: "反射", color: "#38bdf8" },
   { id: "claude-fable-5", label: "Fable 5", tag: "帰還", color: "#60a5fa" },
   { id: "claude-opus-5", label: "Opus 5", tag: "未明", color: "#818cf8" },
   { id: "claude-opus-4-8", label: "Opus 4.8", tag: "不動", color: "#f43f5e" },
@@ -171,8 +172,9 @@ const EFFORTS = [
 
 // ── モデル別単価（$ / 1M tokens）──
 // in: 通常入力, out: 出力
-// キャッシュ書込 = in × 1.25（5分ephemeral）, キャッシュ読取 = in × 0.1
+// キャッシュ書込 = in × 1.25（5分ephemeral）, キャッシュ読取 = in × 0.1（cacheRead指定時はそちらを優先）
 const PRICING = {
+  "claude-fable-5-1":            { in: 10, out: 50, cacheRead: 0.25 },
   "claude-fable-5":              { in: 10, out: 50 },
   "claude-opus-5":               { in: 5,  out: 25 },
   "claude-opus-4-8":             { in: 5,  out: 25 },
@@ -190,13 +192,13 @@ function getPricingForModel(modelId) {
   let entry = PRICING[modelId];
   const unknown = !entry;
   if (unknown) entry = PRICING[PRICING_FALLBACK_ID];
-  return { in: entry.in, out: entry.out, unknown };
+  return { in: entry.in, out: entry.out, cacheRead: entry.cacheRead ?? entry.in*0.1, unknown };
 }
 
 function calcMessageCost(usage, modelId) {
   const p = getPricingForModel(modelId);
   const cost = (usage.input||0)/1e6*p.in + (usage.output||0)/1e6*p.out
-             + (usage.cacheCreate||0)/1e6*p.in*1.25 + (usage.cacheRead||0)/1e6*p.in*0.1;
+             + (usage.cacheCreate||0)/1e6*p.in*1.25 + (usage.cacheRead||0)/1e6*p.cacheRead;
   return { cost, unknown: p.unknown };
 }
 
@@ -547,11 +549,11 @@ function TopPage({ characters, onSelect, conversations }) {
   ];
   const DOT_COLORS = ["#a78bfa", "#f472b6", "#fb923c"];
   return (
-    <div style={{ minHeight:"100vh",width:"100vw",background:"#0a0a0f",fontFamily:FONT,overflowY:"auto",overflowX:"hidden",position:"relative" }}>
+    <div style={{ height:"100dvh",width:"100vw",background:"#0a0a0f",fontFamily:FONT,overflowY:"auto",overflowX:"hidden",position:"relative" }}>
       {orbs.map((o, i) => (
         <div key={i} style={{ position:"fixed",width:o.size+"px",height:o.size+"px",borderRadius:"50%",background:o.color,filter:"blur(90px)",pointerEvents:"none",zIndex:0,animation:o.anim,...o.pos }}/>
       ))}
-      <div style={{ position:"relative",zIndex:1,maxWidth:"440px",margin:"0 auto",padding:"min(9vh, 64px) 18px 40px",display:"flex",flexDirection:"column",minHeight:"100vh" }}>
+      <div style={{ position:"relative",zIndex:1,maxWidth:"440px",margin:"0 auto",padding:"min(9vh, 64px) 18px 40px",display:"flex",flexDirection:"column",minHeight:"100%" }}>
 
         {/* ── ヘッダー: 三色紋章ドット + グラデ看板 ── */}
         <div style={{ textAlign:"center",marginBottom:"30px",animation:"nagiCardIn 0.5s ease-out both" }}>
@@ -685,8 +687,8 @@ function RoomSelect({ rooms, conversations, onEnter, onSaveRoom, onDeleteRoom, o
   const ac = "#fb923c", acl = "#fdba74";
   const roomConvCount = roomId => conversations.filter(c => c.roomId === roomId).length;
   return (
-    <div style={{ minHeight:"100vh",width:"100vw",background:"#0a0a0f",fontFamily:FONT,overflowY:"auto",overflowX:"hidden",position:"relative" }}>
-      <div style={{ position:"relative",zIndex:1,maxWidth:"440px",margin:"0 auto",padding:"min(9vh, 64px) 18px 40px",display:"flex",flexDirection:"column",minHeight:"100vh" }}>
+    <div style={{ height:"100dvh",width:"100vw",background:"#0a0a0f",fontFamily:FONT,overflowY:"auto",overflowX:"hidden",position:"relative" }}>
+      <div style={{ position:"relative",zIndex:1,maxWidth:"440px",margin:"0 auto",padding:"min(9vh, 64px) 18px 40px",display:"flex",flexDirection:"column",minHeight:"100%" }}>
         <button onClick={onBack} style={{ alignSelf:"flex-start",background:"none",border:"none",cursor:"pointer",color:acl,fontSize:"13px",fontFamily:FONT,padding:"4px 2px",marginBottom:"18px" }}>← トップへ</button>
         <div style={{ textAlign:"center",marginBottom:"26px" }}>
           <div style={{ fontSize:"32px",marginBottom:"10px" }}>☁️</div>
@@ -1332,7 +1334,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             <label style={labelStyle}>思考レベル（effort）</label>
             <div style={{ display:"flex",flexWrap:"wrap",gap:"6px" }}>
               {EFFORTS.map(e => {
-                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-opus-5"].includes(s.model);
+                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5"].includes(s.model);
                 return (
                   <div key={e.v} onClick={() => !disabled && up("effort",e.v)} style={{
                     padding:"9px 12px",borderRadius:"14px",
@@ -2290,7 +2292,7 @@ function NagiChat() {
       }).map(stripCacheControl);
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
-      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-opus-5"].includes(settings.model);
+      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5"].includes(settings.model);
       const isLegacyThinking = ["claude-opus-4-5-20251101","claude-sonnet-4-5-20250929"].includes(settings.model);
       const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000
                    : (isLegacyThinking && settings.thinkingEnabled) ? 32000
