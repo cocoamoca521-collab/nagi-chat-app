@@ -152,6 +152,7 @@ const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "n
 const MODELS = [
   { id: "claude-fable-5-1", label: "Fable 5.1", tag: "反射", color: "#38bdf8" },
   { id: "claude-fable-5", label: "Fable 5", tag: "帰還", color: "#60a5fa" },
+  { id: "claude-opus-5-5", label: "Opus 5.5", tag: "直球", color: "#e879f9" },
   { id: "claude-opus-5", label: "Opus 5", tag: "未明", color: "#818cf8" },
   { id: "claude-opus-4-8", label: "Opus 4.8", tag: "不動", color: "#f43f5e" },
   { id: "claude-opus-4-7", label: "Opus 4.7", tag: "安定", color: "#fbbf24" },
@@ -176,6 +177,7 @@ const EFFORTS = [
 const PRICING = {
   "claude-fable-5-1":            { in: 10, out: 50, cacheRead: 0.25 },
   "claude-fable-5":              { in: 10, out: 50 },
+  "claude-opus-5-5":             { in: 4,  out: 20, cacheRead: 0.20 },
   "claude-opus-5":               { in: 5,  out: 25 },
   "claude-opus-4-8":             { in: 5,  out: 25 },
   "claude-opus-4-7":             { in: 5,  out: 25 },
@@ -1037,6 +1039,76 @@ function GeneratedImagesBlock({ images, theme, onExpand, showLabel }) {
   );
 }
 
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      throw new Error("clipboard API unavailable");
+    }
+  } catch (e) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (e2) { console.error("[COPY]", e2); return false; }
+  }
+  return true;
+}
+
+// ── 拡大ビュー下部：生成プロンプトの開閉パネル（デフォルト閉）──
+function ImagePromptPanel({ img, theme, open, onToggle }) {
+  const t = theme || THEMES.nagi;
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    if (await copyToClipboard(img.prompt)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }
+  };
+  return (
+    <div style={{ marginTop:"10px", display:"flex", flexDirection:"column", alignItems:"center", fontFamily:FONT }}>
+      <button onClick={onToggle} style={{
+        padding:"6px 14px", borderRadius:"14px", cursor:"pointer",
+        background:"rgba(0,0,0,0.5)", border:`1px solid ${t.thinkingBorder}`,
+        color:t.accentLight, fontSize:"11px", fontFamily:FONT,
+      }}>
+        📜 {open ? "プロンプトを閉じる" : "プロンプトを見る"}
+      </button>
+      {open && (
+        <div style={{
+          marginTop:"8px", width:"min(560px, 92vw)", maxHeight:"30vh", overflowY:"auto", boxSizing:"border-box",
+          padding:"12px 14px", borderRadius:"14px",
+          background:"rgba(12,10,18,0.92)", border:`1px solid ${t.thinkingBorder}`,
+          animation:"fadeIn 0.15s ease-out",
+        }}>
+          {img.prompt ? (
+            <>
+              {img.caption && (
+                <div style={{ fontSize:"12px", color:t.accentLight, marginBottom:"8px", lineHeight:1.6 }}>{img.caption}</div>
+              )}
+              <div style={{ fontSize:"11.5px", color:"#d4d4d8", lineHeight:1.65, whiteSpace:"pre-wrap", wordBreak:"break-word", userSelect:"text" }}>{img.prompt}</div>
+              <div style={{ display:"flex", justifyContent:"flex-end", marginTop:"10px" }}>
+                <button onClick={handleCopy} style={{
+                  padding:"5px 12px", borderRadius:"10px", cursor:"pointer",
+                  background:t.thinkingBg, border:`1px solid ${t.thinkingBorder}`,
+                  color:t.accentLight, fontSize:"11px", fontFamily:FONT,
+                }}>{copied ? "✓ コピーしました" : "コピー"}</button>
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize:"12px", color:"#71717a", textAlign:"center" }}>この画像にはプロンプトの記録がありません</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══ Message Bubble ═══
 async function saveGeneratedImage(img) {
   const src = img.fullBase64 ? "data:image/png;base64," + img.fullBase64 : (img.preview || img.url);
@@ -1061,30 +1133,15 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
   const t = theme || THEMES.nagi;
   const isFlat = !isUser && layoutMode === "flat";
   const [showUsageDetail, setShowUsageDetail] = useState(false);
-  const [expandedImg, setExpandedImg] = useState(null);
+  const [expandedImg, setExpandedImgRaw] = useState(null);
+  const [showImgPrompt, setShowImgPrompt] = useState(false);
+  const setExpandedImg = (img) => { setShowImgPrompt(false); setExpandedImgRaw(img); };
   const [expandedFile, setExpandedFile] = useState(null);
   const [copied, setCopied] = useState(false);
   const segmentedThinking = !isUser && Array.isArray(msg.thinking);
   const canCopy = !msg._streaming && !!(msg.content && msg.content.trim());
   const handleCopy = async () => {
-    const text = msg.content || "";
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        throw new Error("clipboard API unavailable");
-      }
-    } catch (e) {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed"; ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.focus(); ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch (e2) { console.error("[COPY]", e2); return; }
-    }
+    if (!(await copyToClipboard(msg.content || ""))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
@@ -1118,9 +1175,12 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
       )}
       {expandedImg && (
         <div onClick={() => setExpandedImg(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, animation:"fadeIn 0.15s ease-out" }}>
-          <div onClick={e => e.stopPropagation()} style={{ position:"relative", maxWidth:"92vw", maxHeight:"86vh" }}>
-            <img src={expandedImg.fullBase64 ? "data:image/png;base64," + expandedImg.fullBase64 : (expandedImg.preview || expandedImg.url)} style={{ maxWidth:"92vw", maxHeight:"80vh", borderRadius:"16px", display:"block" }} />
-            <button onClick={() => saveGeneratedImage(expandedImg)} title="保存" style={{ position:"absolute", bottom:"12px", right:"12px", width:"40px", height:"40px", borderRadius:"50%", border:"none", background:"rgba(0,0,0,0.6)", cursor:"pointer", fontSize:"18px", display:"flex", alignItems:"center", justifyContent:"center" }}>💾</button>
+          <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", alignItems:"center", maxWidth:"92vw", maxHeight:"94vh" }}>
+            <div style={{ position:"relative" }}>
+              <img src={expandedImg.fullBase64 ? "data:image/png;base64," + expandedImg.fullBase64 : (expandedImg.preview || expandedImg.url)} style={{ maxWidth:"92vw", maxHeight: showImgPrompt ? "50vh" : "80vh", borderRadius:"16px", display:"block" }} />
+              <button onClick={() => saveGeneratedImage(expandedImg)} title="保存" style={{ position:"absolute", bottom:"12px", right:"12px", width:"40px", height:"40px", borderRadius:"50%", border:"none", background:"rgba(0,0,0,0.6)", cursor:"pointer", fontSize:"18px", display:"flex", alignItems:"center", justifyContent:"center" }}>💾</button>
+            </div>
+            <ImagePromptPanel img={expandedImg} theme={t} open={showImgPrompt} onToggle={() => setShowImgPrompt(v => !v)} />
           </div>
         </div>
       )}
@@ -1379,7 +1439,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             <label style={labelStyle}>思考レベル（effort）</label>
             <div style={{ display:"flex",flexWrap:"wrap",gap:"6px" }}>
               {EFFORTS.map(e => {
-                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5"].includes(s.model);
+                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5"].includes(s.model);
                 return (
                   <div key={e.v} onClick={() => !disabled && up("effort",e.v)} style={{
                     padding:"9px 12px",borderRadius:"14px",
@@ -1798,7 +1858,7 @@ function NagiChat() {
           light.images = light.images.map(img => ({ preview: img.preview, type: img.type }));
         }
         if (light.generatedImages) {
-          light.generatedImages = light.generatedImages.map(img => ({ preview: img.preview, url: img.url || null }));
+          light.generatedImages = light.generatedImages.map(img => ({ preview: img.preview, url: img.url || null, ...(img.prompt ? { prompt: img.prompt } : {}), ...(img.caption ? { caption: img.caption } : {}) }));
         }
         if (light.files) {
           light.files = light.files.map(f => ({
@@ -2483,7 +2543,7 @@ function NagiChat() {
       }
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
-      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5"].includes(settings.model);
+      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5"].includes(settings.model);
       const isLegacyThinking = ["claude-opus-4-5-20251101","claude-sonnet-4-5-20250929"].includes(settings.model);
       const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000
                    : (isLegacyThinking && settings.thinkingEnabled) ? 32000
@@ -2525,6 +2585,9 @@ function NagiChat() {
           body.thinking = { type:"adaptive", display:"summarized" };
           body.output_config = { effort };
         }
+      } else if (settings.model === "claude-opus-5-5") {
+        // Opus 5.5はthinking無効化不可（disabledは400）。OFF時もeffortだけは効かせる（未指定だとAPI既定のmedium）
+        body.output_config = { effort };
       }
       const imageGenActive = settings.imageGenEnabled && settings.openaiApiKey;
       const tools = [];
@@ -2557,6 +2620,7 @@ function NagiChat() {
         const toolBlock = result.fullContent.find(b => b.type === "tool_use" && b.name === "generate_image");
         if (toolBlock) {
           const imgPrompt = toolBlock.input?.prompt || "";
+          const imgMeta = { prompt:imgPrompt, caption:toolBlock.input?.caption || null };
           let toolResultContent, isError = false, generatedImages = null;
           try {
             const refBlob = await getRefImageBlob(activeChar);
@@ -2568,13 +2632,13 @@ function NagiChat() {
                 { type:"text", text:"画像を生成しました。" },
                 { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:shrunk.base64 } },
               ];
-              generatedImages = [{ preview:shrunk.preview, fullBase64:imgResult.base64, url:null }];
+              generatedImages = [{ preview:shrunk.preview, fullBase64:imgResult.base64, url:null, ...imgMeta }];
             } else if (imgResult.url) {
               toolResultContent = [
                 { type:"text", text:"画像を生成しました。" },
                 { type:"image", source:{ type:"url", url:imgResult.url } },
               ];
-              generatedImages = [{ preview:null, fullBase64:null, url:imgResult.url }];
+              generatedImages = [{ preview:null, fullBase64:null, url:imgResult.url, ...imgMeta }];
             } else {
               throw new Error("OpenAI returned no image data");
             }
@@ -2675,9 +2739,9 @@ function NagiChat() {
       let generatedImages;
       if (imgResult.base64) {
         const shrunk = await shrinkBase64Image(imgResult.base64, 512, 0.8);
-        generatedImages = [{ preview:shrunk.preview, fullBase64:imgResult.base64, url:null }];
+        generatedImages = [{ preview:shrunk.preview, fullBase64:imgResult.base64, url:null, prompt:promptText, caption:null }];
       } else if (imgResult.url) {
-        generatedImages = [{ preview:null, fullBase64:null, url:imgResult.url }];
+        generatedImages = [{ preview:null, fullBase64:null, url:imgResult.url, prompt:promptText, caption:null }];
       } else {
         throw new Error("OpenAI returned no image data");
       }
