@@ -413,17 +413,24 @@ function formatDateSeparatorText(ts) {
 // 発動したエントリ本文は「送信ペイロードの最後のユーザーメッセージ」にだけ付加する（使い捨て）。
 // systemに入れるとマッチ結果ごとにキャッシュが全損するので禁止。履歴(localStorage)にも本文は書き戻さない。
 const LORE_SCAN_MESSAGES = 6; // 直近3往復 = 6メッセージ（今回の送信テキストは別枠で必ず含める）
+const LORE_COOLDOWN_TURNS = 4; // 発火後、同じエントリが休むユーザーターン数
 
 // スキャン対象 = 直近6メッセージ + 今回の送信テキスト。大文字小文字無視の単純部分一致。
+// クールダウン：直近LORE_COOLDOWN_TURNS回のユーザー発言（今回を除く）の triggeredLore に
+// タイトルがあるエントリは今回スキップする。発火記録は既存の triggeredLore をそのまま使う。
 function matchLorebook(lorebook, allMsgs) {
   if (!Array.isArray(lorebook) || lorebook.length === 0) return [];
   const last = allMsgs[allMsgs.length - 1];
   if (!last || last.role !== "user" || last._directImageGen) return [];
-  const history = allMsgs.slice(0, -1).filter(m => m.content && !m.errorType && !m._directImageGen);
+  const prior = allMsgs.slice(0, -1);
+  const history = prior.filter(m => m.content && !m.errorType && !m._directImageGen);
   const scanText = [...history.slice(-LORE_SCAN_MESSAGES), last].map(m => m.content || "").join("\n").toLowerCase();
+  const recentUserTurns = prior.filter(m => m.role === "user" && !m._directImageGen).slice(-LORE_COOLDOWN_TURNS);
+  const onCooldown = title => recentUserTurns.some(m => m.triggeredLore?.includes(title));
   return lorebook.filter(e =>
     e && e.enabled !== false && e.content && e.content.trim() &&
-    (e.keywords || []).some(k => { const kw = String(k).trim().toLowerCase(); return kw && scanText.includes(kw); })
+    (e.keywords || []).some(k => { const kw = String(k).trim().toLowerCase(); return kw && scanText.includes(kw); }) &&
+    !onCooldown(e.title)
   );
 }
 
