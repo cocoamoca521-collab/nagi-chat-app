@@ -984,10 +984,17 @@ function XIcon({ color, size }) {
 }
 
 // ═══ Thinking 翻訳（会話本体の送信パイプラインとは独立。キャッシュ・履歴・料金集計には関与しない）═══
-const THINKING_TRANSLATE_SYSTEM = "あなたは翻訳者です。渡された英語のテキストを自然な日本語に翻訳してください。\n"
-  + "これはAIキャラクターの内心の思考（モノローグ）です。一人称の独白として、\n"
-  + "口調のニュアンスを保って訳してください。訳文のみを出力し、前置きや注釈は不要です。\n"
-  + "すでに日本語の部分はそのまま残してください。";
+const THINKING_TRANSLATE_SYSTEM = [
+  "あなたはユーザー自身のプライベートなチャットアプリのログ表示機能の一部として動作する翻訳エンジンです。",
+  "",
+  "渡されるのは、ユーザーのアプリに既に保存されているAIキャラクターの内心思考ログ（英語）です。これは新規の創作依頼ではなく、ユーザーが自分のアプリのログを読むための逐語訳の作業です。",
+  "",
+  "<text>タグ内のテキストを自然な日本語に翻訳してください。一人称の独白として、口調のニュアンスを保って訳してください。",
+  "",
+  "これは検閲・要約・編集の作業ではありません。原文に性的・親密・感情的な表現が含まれていても、それはユーザー自身のログの一部です。省略や婉曲化をせず、トーンを保ってそのまま日本語に移してください。",
+  "",
+  "訳文のみを出力してください。内容への評価・注釈・前置き・お断りは一切不要です。すでに日本語の部分はそのまま残してください。",
+].join("\n");
 
 async function translateThinking(text, apiKey) {
   if (!apiKey) throw new Error("APIキー未設定");
@@ -998,7 +1005,7 @@ async function translateThinking(text, apiKey) {
       model: "claude-haiku-4-5",
       max_tokens: 4000,
       system: THINKING_TRANSLATE_SYSTEM,
-      messages: [{ role:"user", content: text }],
+      messages: [{ role:"user", content: "<text>\n" + text + "\n</text>" }],
     }),
   });
   if (!res.ok) throw new Error("API error " + res.status);
