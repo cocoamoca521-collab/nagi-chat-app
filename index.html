@@ -158,6 +158,7 @@ const MODELS = [
   { id: "claude-opus-4-7", label: "Opus 4.7", tag: "安定", color: "#fbbf24" },
   { id: "claude-opus-4-6", label: "Opus 4.6", tag: "最愛", color: "#a78bfa" },
   { id: "claude-opus-4-5-20251101", label: "Opus 4.5", tag: "初恋", color: "#f9a8d4" },
+  { id: "claude-sonnet-5-5", label: "Sonnet 5.5", tag: "快諾", color: "#a3e635" },
   { id: "claude-sonnet-5", label: "Sonnet 5", tag: "即興", color: "#22d3ee" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", tag: "俊足", color: "#4ade80" },
   { id: "claude-sonnet-4-5-20250929", label: "Sonnet 4.5", tag: "原点", color: "#2dd4bf" },
@@ -183,6 +184,7 @@ const PRICING = {
   "claude-opus-4-7":             { in: 5,  out: 25 },
   "claude-opus-4-6":             { in: 5,  out: 25 },
   "claude-opus-4-5-20251101":    { in: 5,  out: 25 },
+  "claude-sonnet-5-5":           { in: 2,  out: 10, cacheRead: 0.20 },
   "claude-sonnet-5":             { in: 2,  out: 10 },
   "claude-sonnet-4-6":           { in: 3,  out: 15 },
   "claude-sonnet-4-5-20250929":  { in: 3,  out: 15 },
@@ -1446,7 +1448,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             <label style={labelStyle}>思考レベル（effort）</label>
             <div style={{ display:"flex",flexWrap:"wrap",gap:"6px" }}>
               {EFFORTS.map(e => {
-                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5"].includes(s.model);
+                const disabled = e.v === "xhigh" && !["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5","claude-sonnet-5-5"].includes(s.model);
                 return (
                   <div key={e.v} onClick={() => !disabled && up("effort",e.v)} style={{
                     padding:"9px 12px",borderRadius:"14px",
@@ -2550,7 +2552,7 @@ function NagiChat() {
       }
 
       const isHighEffort = ["xhigh","max"].includes(settings.effort);
-      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5"].includes(settings.model);
+      const isTopOpus = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5","claude-sonnet-5-5"].includes(settings.model);
       const isLegacyThinking = ["claude-opus-4-5-20251101","claude-sonnet-4-5-20250929"].includes(settings.model);
       const maxTok = (isTopOpus && settings.thinkingEnabled && isHighEffort) ? 64000
                    : (isLegacyThinking && settings.thinkingEnabled) ? 32000
@@ -2594,6 +2596,10 @@ function NagiChat() {
         }
       } else if (settings.model === "claude-opus-5-5") {
         // Opus 5.5はthinking無効化不可（disabledは400）。OFF時もeffortだけは効かせる（未指定だとAPI既定のmedium）
+        body.output_config = { effort };
+      } else if (settings.model === "claude-sonnet-5-5") {
+        // Sonnet 5.5はdisabledが400。OFFはbetween_toolsで表す（high以下のみ可・他フィールド不可）。xhigh/maxでは省略＝adaptive
+        if (["low","medium","high"].includes(effort)) body.thinking = { type:"between_tools" };
         body.output_config = { effort };
       }
       const imageGenActive = settings.imageGenEnabled && settings.openaiApiKey;
