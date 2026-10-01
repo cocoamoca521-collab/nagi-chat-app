@@ -983,18 +983,51 @@ function XIcon({ color, size }) {
   );
 }
 
+// ═══ Thinking → Google翻訳 ═══
+// 原文をURLに載せてGoogle翻訳を開く（Androidでアプリが入っていればアプリ側で開く）。
+// URLが長すぎると切れるので、GTRANSLATE_MAX_CHARS を超える原文は段落→文→単語の切れ目で分割し、タップごとに順番に開く。
+const GTRANSLATE_MAX_CHARS = 2000;
+const GTRANSLATE_BASE = "https://translate.google.com/?sl=en&tl=ja&op=translate&text=";
+
+function splitForTranslate(text, max) {
+  const src = text.trim();
+  if (src.length <= max) return [src];
+  const chunks = [];
+  let rest = src;
+  while (rest.length > max) {
+    const head = rest.slice(0, max);
+    // 後半寄りで最後の区切り（改行 > 文末 > 空白）を探す。見つからなければmax文字で強制カット
+    let cut = -1;
+    for (const re of [/\n\s*\n/g, /\n/g, /[.!?。！？]\s/g, /\s/g]) {
+      let m, last = -1;
+      while ((m = re.exec(head))) last = m.index + m[0].length;
+      if (last > max * 0.5) { cut = last; break; }
+    }
+    if (cut <= 0) cut = max;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks.filter(Boolean);
+}
+
+function openGoogleTranslate(text) {
+  window.open(GTRANSLATE_BASE + encodeURIComponent(text), "_blank", "noopener,noreferrer");
+}
+
 // ═══ Thinking Block ═══
 function ThinkingBlock({ thinking, thinkingRequested, theme, streaming }) {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [chunkIdx, setChunkIdx] = useState(0); // 分割時、次に開くパート
   if (!thinkingRequested) return null;
   const t = theme || THEMES.nagi;
   const isEmpty = !thinking || thinking.trim() === "" || thinking.trim() === "…" || thinking.trim() === "...";
-  const canCopy = open && !isEmpty && !streaming;
-  const handleCopy = async () => {
-    if (!(await copyToClipboard(thinking))) return;
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+  const canTranslate = open && !isEmpty && !streaming;
+  const chunks = canTranslate ? splitForTranslate(thinking, GTRANSLATE_MAX_CHARS) : [];
+  const idx = chunkIdx % Math.max(chunks.length, 1);
+  const handleTranslate = () => {
+    openGoogleTranslate(chunks[idx]);
+    setChunkIdx((idx + 1) % chunks.length);
   };
   return (
     <div style={{ marginBottom: "8px", maxWidth: "82%" }}>
@@ -1012,13 +1045,13 @@ function ThinkingBlock({ thinking, thinkingRequested, theme, streaming }) {
         <span style={{ fontWeight: 500 }}>{isEmpty ? "ECO — 思考スキップ" : "Thinking"}</span>
         <span style={{ transform: open ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.25s", fontSize: "9px" }}>▼</span>
       </div>
-      {canCopy && (
-        <button onClick={handleCopy} style={{
+      {canTranslate && (
+        <button onClick={handleTranslate} style={{
           marginLeft: "auto", padding: "4px 10px", borderRadius: "10px",
           background: "transparent", border: `1px solid ${t.thinkingBorder}`,
           color: t.accentLight, fontSize: "11px", fontFamily: FONT,
           cursor: "pointer", transition: "all 0.2s", whiteSpace: "nowrap",
-        }}>{copied ? "✓ コピーしました" : "📋 コピー"}</button>
+        }}>{chunks.length > 1 ? `🌐 翻訳 ${idx + 1}/${chunks.length}` : "🌐 翻訳"}</button>
       )}
       </div>
       {open && (
