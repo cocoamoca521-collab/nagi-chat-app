@@ -983,79 +983,19 @@ function XIcon({ color, size }) {
   );
 }
 
-// ═══ Thinking 翻訳（会話本体の送信パイプラインとは独立。キャッシュ・履歴・料金集計には関与しない）═══
-const THINKING_TRANSLATE_SYSTEM = [
-  "あなたは翻訳者です。渡されるのは、チャットアプリ上のAIキャラクターの内心の思考（モノローグ）です。",
-  "<text>タグ内の英語を自然な日本語に翻訳してください。一人称の独白として、口調のニュアンスを保って訳してください。",
-  "訳文のみを出力してください。すでに日本語の部分はそのまま残してください。",
-].join("\n");
-const JA_CHAR_RE = /[\u3040-\u30ff\u4e00-\u9fff]/;
-
-async function translateThinking(text, apiKey) {
-  if (!apiKey) throw new Error("APIキー未設定");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-    body: JSON.stringify({
-      model: "claude-sonnet-5-5",
-      max_tokens: 4000,
-      // 翻訳に思考は不要。Sonnet 5.5はdisabledが400なのでbetween_toolsで止める（effortはhigh以下が条件）
-      thinking: { type: "between_tools" },
-      output_config: { effort: "low" },
-      system: THINKING_TRANSLATE_SYSTEM,
-      messages: [{ role:"user", content: "<text>\n" + text + "\n</text>" }],
-    }),
-  });
-  if (!res.ok) throw new Error("API error " + res.status);
-  const data = await res.json();
-  const out = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
-  // 断られた場合は訳文として表示しない（refusal停止、または日本語を1文字も含まない＝英語のお断り文）
-  if (data.stop_reason === "refusal" || !JA_CHAR_RE.test(out)) {
-    const sd = data.stop_details;
-    const refusalText = out || (sd ? "（本文なし — stop_reason: refusal" + (sd.category ? " / " + sd.category : "") + (sd.explanation ? "）\n" + sd.explanation : "）") : "（本文なし — stop_reason: " + data.stop_reason + "）");
-    console.log("[TRANSLATE] refused:", refusalText);
-    const err = new Error("translation refused");
-    err.refused = true;
-    err.refusalText = refusalText;
-    throw err;
-  }
-  return out;
-}
-
 // ═══ Thinking Block ═══
-function ThinkingBlock({ thinking, thinkingRequested, theme, apiKey, streaming }) {
+function ThinkingBlock({ thinking, thinkingRequested, theme, streaming }) {
   const [open, setOpen] = useState(false);
-  // 訳文はコンポーネントstateにだけ保持（localStorageには保存しない）
-  const [translation, setTranslation] = useState(null);
-  const [translating, setTranslating] = useState(false);
-  const [translateError, setTranslateError] = useState(null);
-  const [showTranslation, setShowTranslation] = useState(true);
-  const [refusalText, setRefusalText] = useState(null); // お断り文の原文（タップで展開）
-  const [showRefusal, setShowRefusal] = useState(false);
+  const [copied, setCopied] = useState(false);
   if (!thinkingRequested) return null;
   const t = theme || THEMES.nagi;
   const isEmpty = !thinking || thinking.trim() === "" || thinking.trim() === "…" || thinking.trim() === "...";
-  const canTranslate = open && !isEmpty && !streaming;
-  const handleTranslate = async () => {
-    if (translating) return;
-    if (translation) { setShowTranslation(v => !v); return; } // 取得済みならトグルのみ（APIは叩き直さない）
-    setTranslating(true);
-    setTranslateError(null);
-    setRefusalText(null);
-    setShowRefusal(false);
-    try {
-      const out = await translateThinking(thinking, apiKey);
-      setTranslation(out);
-      setShowTranslation(true);
-    } catch (e) {
-      console.warn("[THINKING TRANSLATE]", e);
-      setTranslateError(e.refused ? "このThinkingは翻訳できませんでした" : "翻訳に失敗しました。もう一度お試しください");
-      if (e.refused) setRefusalText(e.refusalText || "");
-    } finally {
-      setTranslating(false);
-    }
+  const canCopy = open && !isEmpty && !streaming;
+  const handleCopy = async () => {
+    if (!(await copyToClipboard(thinking))) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
   };
-  const translateLabel = translating ? "翻訳中…" : translation ? (showTranslation ? "訳を隠す" : "訳を見る") : "🌐 訳す";
   return (
     <div style={{ marginBottom: "8px", maxWidth: "82%" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1072,14 +1012,13 @@ function ThinkingBlock({ thinking, thinkingRequested, theme, apiKey, streaming }
         <span style={{ fontWeight: 500 }}>{isEmpty ? "ECO — 思考スキップ" : "Thinking"}</span>
         <span style={{ transform: open ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.25s", fontSize: "9px" }}>▼</span>
       </div>
-      {canTranslate && (
-        <button onClick={handleTranslate} disabled={translating} style={{
+      {canCopy && (
+        <button onClick={handleCopy} style={{
           marginLeft: "auto", padding: "4px 10px", borderRadius: "10px",
           background: "transparent", border: `1px solid ${t.thinkingBorder}`,
           color: t.accentLight, fontSize: "11px", fontFamily: FONT,
-          cursor: translating ? "default" : "pointer", opacity: translating ? 0.6 : 1,
-          transition: "all 0.2s", whiteSpace: "nowrap",
-        }}>{translateLabel}</button>
+          cursor: "pointer", transition: "all 0.2s", whiteSpace: "nowrap",
+        }}>{copied ? "✓ コピーしました" : "📋 コピー"}</button>
       )}
       </div>
       {open && (
@@ -1093,21 +1032,6 @@ function ThinkingBlock({ thinking, thinkingRequested, theme, apiKey, streaming }
           boxShadow: `inset 0 1px 4px ${isEmpty ? "rgba(250,204,21,0.03)" : t.thinkingBg}`,
         }}>
           {isEmpty ? "（思考なし — モデルが思考をスキップしました）" : thinking}
-          {!isEmpty && ((translation && showTranslation) || translateError) && (
-            <>
-              <div style={{ borderTop: `1px dashed ${t.thinkingBorder}`, margin: "12px 0 10px" }} />
-              {translation && showTranslation
-                ? <div style={{ color: "#e4e4e7" }}>{translation}</div>
-                : refusalText !== null
-                  ? <div>
-                      <div onClick={() => setShowRefusal(v => !v)} style={{ color: "#f87171", fontSize: "11.5px", cursor: "pointer", userSelect: "none" }}>
-                        {translateError} <span style={{ fontSize: "9px", display: "inline-block", transform: showRefusal ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.25s" }}>▼</span>
-                      </div>
-                      {showRefusal && <div style={{ marginTop: "6px", color: "#a1a1aa", fontSize: "11.5px" }}>{refusalText}</div>}
-                    </div>
-                  : <div style={{ color: "#f87171", fontSize: "11.5px" }}>{translateError}</div>}
-            </>
-          )}
         </div>
       )}
     </div>
@@ -1232,7 +1156,7 @@ async function saveGeneratedImage(img) {
   } catch (e) { console.error("[IMAGE SAVE]", e); }
 }
 
-function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled, layoutMode, apiKey }) {
+function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled, layoutMode }) {
   const isUser = msg.role === "user";
   const t = theme || THEMES.nagi;
   const isFlat = !isUser && layoutMode === "flat";
@@ -1259,8 +1183,8 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
       </div>
       {!isUser && (
         segmentedThinking
-          ? <ThinkingBlock thinking={msg.thinking[0]} thinkingRequested={msg.thinkingRequested} theme={t} apiKey={apiKey} streaming={msg._streaming} />
-          : <ThinkingBlock thinking={msg.thinking} thinkingRequested={msg.thinkingRequested} theme={t} apiKey={apiKey} streaming={msg._streaming} />
+          ? <ThinkingBlock thinking={msg.thinking[0]} thinkingRequested={msg.thinkingRequested} theme={t} streaming={msg._streaming} />
+          : <ThinkingBlock thinking={msg.thinking} thinkingRequested={msg.thinkingRequested} theme={t} streaming={msg._streaming} />
       )}
       {msg.images?.length > 0 && (
         <div style={{ display:"flex", gap:"4px", flexWrap:"wrap", maxWidth:"82%", marginBottom:"4px" }}>
@@ -1272,7 +1196,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
       {segmentedThinking ? (
         <>
           <GeneratedImagesBlock images={msg.generatedImages} theme={t} onExpand={setExpandedImg} showLabel />
-          {msg.thinking.length > 1 && <ThinkingBlock thinking={msg.thinking[1]} thinkingRequested={msg.thinkingRequested} theme={t} apiKey={apiKey} streaming={msg._streaming} />}
+          {msg.thinking.length > 1 && <ThinkingBlock thinking={msg.thinking[1]} thinkingRequested={msg.thinkingRequested} theme={t} streaming={msg._streaming} />}
         </>
       ) : (
         <GeneratedImagesBlock images={msg.generatedImages} theme={t} onExpand={setExpandedImg} />
@@ -3178,7 +3102,7 @@ function NagiChat() {
                 {showDateSeparator && <DateSeparator timestamp={msg.timestamp} />}
                 <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
                   isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading}
-                  layoutMode={settings.messageLayout || "bubble"} apiKey={settings.apiKey} />
+                  layoutMode={settings.messageLayout || "bubble"} />
               </React.Fragment>
             );
           });
