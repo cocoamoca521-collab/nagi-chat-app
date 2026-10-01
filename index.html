@@ -984,8 +984,9 @@ function XIcon({ color, size }) {
 }
 
 // ═══ Thinking → Google翻訳 ═══
-// 原文をURLに載せてGoogle翻訳を開く（Androidでアプリが入っていればアプリ側で開く）。
-// URLが長すぎると切れるので、GTRANSLATE_MAX_CHARS を超える原文は段落→文→単語の切れ目で分割し、タップごとに順番に開く。
+// 基本は navigator.share で原文を共有シートに渡す（Google翻訳アプリはURLのtext=を読まないため）。
+// navigator.share が無い環境ではURL方式にフォールバック。URLが長すぎると切れるので、
+// GTRANSLATE_MAX_CHARS を超える原文は段落→文→単語の切れ目で分割し、タップごとに順番に開く。
 const GTRANSLATE_MAX_CHARS = 2000;
 const GTRANSLATE_BASE = "https://translate.google.com/?sl=en&tl=ja&op=translate&text=";
 
@@ -1023,11 +1024,22 @@ function ThinkingBlock({ thinking, thinkingRequested, theme, streaming }) {
   const t = theme || THEMES.nagi;
   const isEmpty = !thinking || thinking.trim() === "" || thinking.trim() === "…" || thinking.trim() === "...";
   const canTranslate = open && !isEmpty && !streaming;
+  const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
   const chunks = canTranslate ? splitForTranslate(thinking, GTRANSLATE_MAX_CHARS) : [];
   const idx = chunkIdx % Math.max(chunks.length, 1);
-  const handleTranslate = () => {
+  const openNextChunk = () => {
     openGoogleTranslate(chunks[idx]);
     setChunkIdx((idx + 1) % chunks.length);
+  };
+  const handleTranslate = async () => {
+    if (!canShare) { openNextChunk(); return; }
+    try {
+      await navigator.share({ text: thinking });
+    } catch (e) {
+      if (e && e.name === "AbortError") return; // 共有シートを閉じただけ
+      console.warn("[THINKING SHARE]", e);
+      openNextChunk();
+    }
   };
   return (
     <div style={{ marginBottom: "8px", maxWidth: "82%" }}>
@@ -1051,7 +1063,7 @@ function ThinkingBlock({ thinking, thinkingRequested, theme, streaming }) {
           background: "transparent", border: `1px solid ${t.thinkingBorder}`,
           color: t.accentLight, fontSize: "11px", fontFamily: FONT,
           cursor: "pointer", transition: "all 0.2s", whiteSpace: "nowrap",
-        }}>{chunks.length > 1 ? `🌐 翻訳 ${idx + 1}/${chunks.length}` : "🌐 翻訳"}</button>
+        }}>{!canShare && chunks.length > 1 ? `🌐 翻訳 ${idx + 1}/${chunks.length}` : "🌐 翻訳"}</button>
       )}
       </div>
       {open && (
