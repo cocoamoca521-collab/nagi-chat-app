@@ -2819,11 +2819,19 @@ function NagiChat() {
           const result2 = await consumeAnthropicStream(res2, aTs, settings.model);
 
           apiMessagesForStorage = [assistantToolUseMsg, toolResultMsg, { role:"assistant", content:result2.fullContent }];
+          const u1 = result.usage || {}, u2 = result2.usage || {};
+          const sumUsage = {
+            input_tokens: (u1.input_tokens||0) + (u2.input_tokens||0),
+            output_tokens: (u1.output_tokens||0) + (u2.output_tokens||0),
+            cache_read_input_tokens: (u1.cache_read_input_tokens||0) + (u2.cache_read_input_tokens||0),
+            cache_creation_input_tokens: (u1.cache_creation_input_tokens||0) + (u2.cache_creation_input_tokens||0),
+          };
           result = {
             streamText: (result.streamText ? result.streamText + "\n\n" : "") + result2.streamText,
             streamThinking: [result.streamThinking || "", result2.streamThinking || ""],
             fullContent: result2.fullContent,
-            usage: result2.usage,
+            usage: sumUsage,
+            usageRaw: JSON.stringify([result.usage, result2.usage]),
             modelActual: result2.modelActual,
             stopReason: result2.stopReason,
             generatedImages,
@@ -2838,7 +2846,7 @@ function NagiChat() {
         timestamp:aTs,
         charIcon:activeChar.icon, charName:activeChar.name,
         modelRequested:settings.model, modelActual:result.modelActual, stopReason:result.stopReason,
-        usage:{ input:usage.input_tokens||0, output:usage.output_tokens||0, cacheRead:usage.cache_read_input_tokens||0, cacheCreate:usage.cache_creation_input_tokens||0, raw:JSON.stringify(usage) },
+        usage:{ input:usage.input_tokens||0, output:usage.output_tokens||0, cacheRead:usage.cache_read_input_tokens||0, cacheCreate:usage.cache_creation_input_tokens||0, raw:result.usageRaw || JSON.stringify(usage) },
         ...(apiMessagesForStorage ? { apiMessages:apiMessagesForStorage } : { apiContent:result.fullContent }),
         ...(result.generatedImages ? { generatedImages:result.generatedImages } : {}),
       };
