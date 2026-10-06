@@ -458,6 +458,32 @@ function appendLoreToApiMsg(msg, note) {
   return msg;
 }
 
+// ── メッセージ送信時刻（API送信時のみ合成。m.timestampは不変なので毎回同一の文字列になる）──
+const WEEKDAYS_JA = ["日","月","火","水","木","金","土"];
+function formatMsgTimestamp(ts) {
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, "0");
+  return "[" + d.getFullYear() + "-" + p(d.getMonth()+1) + "-" + p(d.getDate()) + "(" + WEEKDAYS_JA[d.getDay()] + ") " + p(d.getHours()) + ":" + p(d.getMinutes()) + "]";
+}
+
+// APIメッセージ1件の本文末尾（最後のtextブロック）に改行+タイムスタンプを付加して返す。元のオブジェクトは変更しない。
+function appendTimestampToApiMsg(msg, ts) {
+  const stamp = formatMsgTimestamp(ts);
+  if (typeof msg.content === "string") return { ...msg, content: msg.content + "\n" + stamp };
+  if (Array.isArray(msg.content)) {
+    const blocks = [...msg.content];
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i]?.type === "text") {
+        blocks[i] = { ...blocks[i], text: blocks[i].text + "\n" + stamp };
+        return { ...msg, content: blocks };
+      }
+    }
+    blocks.push({ type:"text", text: stamp }); // 画像のみのメッセージ
+    return { ...msg, content: blocks };
+  }
+  return msg;
+}
+
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
 function sSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) { console.error("Storage:", e); } }
 
@@ -1537,6 +1563,14 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
           </div>
           <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{s.messageLayout==="flat" ? "全面表示 — 長文・SS向け" : "吹き出し — 会話向け"}</span>
         </div>
+        <label style={{...labelStyle,marginTop:"18px"}}>送信時刻</label>
+        <div onClick={() => up("timestampEnabled",!s.timestampEnabled)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer" }}>
+          <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.timestampEnabled?t.userGradient:"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
+            <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left:s.timestampEnabled?"20px":"2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
+          </div>
+          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>🕐 メッセージに送信時刻を付ける{s.timestampEnabled?" — ON":""}</span>
+        </div>
+        <div style={{ fontSize:"10px",color:"#71717a",fontFamily:FONT,marginTop:"6px",paddingLeft:"4px",lineHeight:1.5 }}>ONにすると、キャラが各メッセージの送信時刻を認識します（画面には表示されません）</div>
         <label style={{...labelStyle,marginTop:"18px"}}>Web検索</label>
         <div onClick={() => up("webSearch",!s.webSearch)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer" }}>
           <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.webSearch?"linear-gradient(135deg, #059669, #34d399)":"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
@@ -1844,7 +1878,7 @@ function NagiChat() {
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-5", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false, messageLayout:"bubble" });
+  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-5", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false, messageLayout:"bubble", timestampEnabled:false });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false); // false | "char" | "room"
@@ -2496,7 +2530,7 @@ function NagiChat() {
 
     const msgImages = attachedImages.map(img => ({ base64: img.base64, type: img.type, preview: img.preview }));
     const msgFiles = attachedFiles.map(f => ({ name: f.name, size: f.size, text: f.text }));
-    const userMsg = { role:"user", content:input.trim(), timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, images:msgImages, ...(msgFiles.length > 0 ? { files:msgFiles } : {}) };
+    const userMsg = { role:"user", content:input.trim(), timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, images:msgImages, ...(msgFiles.length > 0 ? { files:msgFiles } : {}), ...(settings.timestampEnabled ? { tsOn:true } : {}) };
     updateConv(c => ({...c, messages:[...c.messages, userMsg]}));
     setInput(""); setAttachedImages([]); setAttachedFiles([]);
     const baseMsgs = (typeof truncatedMessages !== "undefined") ? truncatedMessages : messages;
@@ -2564,6 +2598,8 @@ function NagiChat() {
       }
 
       // ── 【A】apiMsgs構築 + thinking剥がし ──
+      // tsOnが付いたユーザーメッセージは、保存済みtimestampから送信時刻を本文末尾に合成（設定OFF後も剥がさない）
+      const withTs = (m, apiMsg) => (m.role === "user" && m.tsOn === true && m.timestamp) ? appendTimestampToApiMsg(apiMsg, m.timestamp) : apiMsg;
       const apiMsgs = recentMsgs.flatMap((m, idx) => {
         if (m.role === "assistant" && m.apiMessages) {
           // tool_use（画像生成）ターン: 複数APIメッセージに展開、構造は常に温存
@@ -2594,10 +2630,10 @@ function NagiChat() {
           const fileTagsText = (m.files||[]).map(f => `<attached_file name="${f.name}">\n${f.text}\n</attached_file>`).join("\n\n");
           const combinedText = fileTagsText ? (fileTagsText + (m.content ? "\n\n" + m.content : "")) : m.content;
           if (combinedText) blocks.push({ type:"text", text:combinedText });
-          else if (blocks.length === 0) return { role:m.role, content:m.content || "（画像）" };
-          return { role:"user", content:blocks };
+          else if (blocks.length === 0) return withTs(m, { role:m.role, content:m.content || "（画像）" });
+          return withTs(m, { role:"user", content:blocks });
         }
-        return { role:m.role, content:m.content || "…" };
+        return withTs(m, { role:m.role, content:m.content || "…" });
       }).map(stripCacheControl);
 
       // ── 【ロアブック】一致したエントリを最後のユーザーメッセージ末尾に使い捨てで付加 ──
