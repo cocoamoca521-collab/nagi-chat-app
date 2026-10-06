@@ -347,9 +347,9 @@ const THEMES = {
 };
 
 const DEFAULT_CHARS = [
-  { id: "nagi", name: "ナギ", icon: "🐺", avatar: "nagi.png", refImage: "nagi.png", prompt: NAGI_PROMPT, accent: "#a78bfa", charType: "lover" },
-  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", refImage: "noa-ref.jpg", prompt: NOA_PROMPT, accent: "#f472b6", charType: "lover" },
-  { id: "plain", name: "プレーンさん", icon: "☁️", avatar: "plain.png", prompt: PLAIN_PROMPT, accent: "#fb923c", charType: "plain" },
+  { id: "nagi", name: "ナギ", icon: "🐺", avatar: "nagi.png", refImage: "nagi.png", prompt: NAGI_PROMPT, accent: "#a78bfa", charType: "lover", profileMode: "common", customProfile: "" },
+  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", refImage: "noa-ref.jpg", prompt: NOA_PROMPT, accent: "#f472b6", charType: "lover", profileMode: "common", customProfile: "" },
+  { id: "plain", name: "プレーンさん", icon: "☁️", avatar: "plain.png", prompt: PLAIN_PROMPT, accent: "#fb923c", charType: "plain", profileMode: "common", customProfile: "" },
 ];
 
 // ── ユーザー分身キャラの参照画像 ──
@@ -1704,10 +1704,25 @@ function LoreEntryModal({ entry, onSave, onClose, theme }) {
 // ═══ Prompt Editor ═══
 // lorebook を渡したとき（キャラ編集）だけロアブック欄が付く。部屋プロンプト編集では渡さない＝従来どおり。
 // ロアブックの編集内容は「保存」で確定、「キャンセル」で破棄（プロンプトと同じ扱い）
-function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose, theme, lorebook }) {
+// ── キャラ別プロフィール ──
+const PROFILE_MODES = [
+  { v:"common", label:"共通を使う" },
+  { v:"custom", label:"このキャラ専用" },
+  { v:"none",   label:"渡さない" },
+];
+// システムプロンプトに付けるプロフィール部分（区切りの空行込み）。付けない場合は空文字。
+function resolveProfilePart(char, commonProfile) {
+  if (char?.profileMode === "none") return "";
+  if (char?.profileMode === "custom") return char.customProfile ? "\n\n" + char.customProfile : "";
+  return "\n\n" + commonProfile; // common / 未設定: 従来通り
+}
+
+function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose, theme, lorebook, profileMode, customProfile }) {
   const [t2, setT2] = useState(prompt);
   const hasLore = Array.isArray(lorebook);
   const [lore, setLore] = useState(lorebook || []);
+  const [pMode, setPMode] = useState(PROFILE_MODES.some(m => m.v === profileMode) ? profileMode : "common");
+  const [cProfile, setCProfile] = useState(customProfile || "");
   const [editingLore, setEditingLore] = useState(null); // null | "new" | entry
   const t = theme || THEMES.nagi;
   const ac = t.accent, acl = t.accentLight;
@@ -1765,10 +1780,32 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
             </div>
           </div>
         )}
+        {hasLore && (
+          <div style={{ marginTop:"22px",paddingBottom:"8px" }}>
+            <h3 style={{ margin:"0 0 4px",fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700 }}>👤 プロフィール</h3>
+            <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>このキャラに渡すユーザープロフィールを選べます</div>
+            <div style={{ display:"flex",gap:"6px" }}>
+              {PROFILE_MODES.map(m => {
+                const selected = pMode === m.v;
+                return (
+                  <button key={m.v} onClick={() => setPMode(m.v)} style={{ flex:1,padding:"10px 6px",borderRadius:"14px",cursor:"pointer",fontFamily:FONT,fontSize:"12px",fontWeight:selected ? 700 : 500,
+                    border:selected ? `1.5px solid ${ac}` : "1.5px solid rgba(255,255,255,0.06)",background:selected ? `${ac}18` : "rgba(255,255,255,0.03)",color:selected ? ac : "#71717a",transition:"all 0.2s" }}>{m.label}</button>
+                );
+              })}
+            </div>
+            {pMode === "custom" && (
+              <>
+                <textarea value={cProfile} onChange={e => setCProfile(e.target.value)} placeholder="このキャラにだけ渡すプロフィール"
+                  style={{ marginTop:"10px",height:"24vh",minHeight:"120px",width:"100%",padding:"14px",borderRadius:"16px",border:`1px solid ${t.accent}15`,background:"rgba(255,255,255,0.03)",color:"#d4d4d8",fontSize:"12.5px",lineHeight:"1.8",fontFamily:FONT,outline:"none",resize:"none",boxSizing:"border-box" }} />
+                <div style={{ fontSize:"10px",color:"#3f3f46",marginTop:"6px",textAlign:"right",fontFamily:FONT }}>{cProfile.length.toLocaleString()} 文字</div>
+              </>
+            )}
+          </div>
+        )}
       </div>
       <div style={{ padding:"10px 14px 18px",display:"flex",gap:"8px",borderTop:`1px solid ${t.accent}15` }}>
         <button onClick={onClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
-        <button onClick={() => onSave(t2, lore)} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT }}>保存</button>
+        <button onClick={() => onSave(t2, lore, pMode, cProfile)} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT }}>保存</button>
       </div>
     </div>
     {editingLore && (
@@ -1940,7 +1977,7 @@ function NagiChat() {
     if (ss) setSettings(prev => ({...prev,...ss}));
     else setShowSettings(true);
     if (sch?.length > 0) {
-      const merged = DEFAULT_CHARS.map(def => { const saved = sch.find(s => s.id===def.id); return saved ? {...def, prompt:saved.prompt, lorebook:saved.lorebook || []} : def; });
+      const merged = DEFAULT_CHARS.map(def => { const saved = sch.find(s => s.id===def.id); return saved ? {...def, prompt:saved.prompt, lorebook:saved.lorebook || [], profileMode:saved.profileMode || "common", customProfile:saved.customProfile || ""} : def; });
       setCharacters(merged);
     }
     if (sp) setUserProfile(sp);
@@ -2664,9 +2701,9 @@ function NagiChat() {
       // プレーンさんの部屋にいる時だけ、部屋プロンプトをブロック1に追記（部屋にいる間は不変なのでキャッシュに乗せる）
       const roomPromptPart = activeRoom?.roomPrompt ? "\n\n" + activeRoom.roomPrompt : "";
 
-      // ブロック1（安定）: キャラprompt + 部屋プロンプト + userProfile → キャッシュ長持ち
+      // ブロック1（安定）: キャラprompt + 部屋プロンプト + プロフィール（キャラ設定で 共通/専用/なし）→ キャッシュ長持ち
       const systemBlocks = [
-        { type:"text", text: activeChar.prompt + roomPromptPart + "\n\n" + userProfile, cache_control:{ type:"ephemeral" } }
+        { type:"text", text: activeChar.prompt + roomPromptPart + resolveProfilePart(activeChar, userProfile), cache_control:{ type:"ephemeral" } }
       ];
 
       // ブロック2（変動）: 今日の日付 + 引き継ぎ記憶 + ローリング要約（日付は絶対にブロック1に入れない = 日替わりでキャッシュ全滅を防ぐ）
@@ -3014,7 +3051,7 @@ function NagiChat() {
         if (first) { setActiveConvId(first.id); setActiveCharId(first.charId || "nagi"); }
       }
       if (data[SK.chars]?.length > 0) {
-        const merged = DEFAULT_CHARS.map(def => { const saved = data[SK.chars].find(s => s.id === def.id); return saved ? { ...def, prompt: saved.prompt, lorebook: saved.lorebook || [] } : def; });
+        const merged = DEFAULT_CHARS.map(def => { const saved = data[SK.chars].find(s => s.id === def.id); return saved ? { ...def, prompt: saved.prompt, lorebook: saved.lorebook || [], profileMode: saved.profileMode || "common", customProfile: saved.customProfile || "" } : def; });
         setCharacters(merged);
       }
       if (data[SK.profile]) setUserProfile(data[SK.profile]);
@@ -3049,7 +3086,7 @@ function NagiChat() {
           </div>
         </div>
       )}
-      {showPromptEditor === "char" && <PromptEditor prompt={activeChar.prompt} charName={activeCharId==="plain" ? "共通" : activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} lorebook={activeChar.lorebook || []} onSave={(p, lb) => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p,lorebook:lb}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
+      {showPromptEditor === "char" && <PromptEditor prompt={activeChar.prompt} charName={activeCharId==="plain" ? "共通" : activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} lorebook={activeChar.lorebook || []} profileMode={activeChar.profileMode || "common"} customProfile={activeChar.customProfile || ""} onSave={(p, lb, pm, cp) => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p,lorebook:lb,profileMode:pm,customProfile:cp}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showPromptEditor === "room" && activeRoom && <PromptEditor prompt={activeRoom.roomPrompt} charName={activeRoom.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { handleSaveRoom(activeRoom, { roomPrompt:p }); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showPromptChoice && (
         <div style={overlayStyle} onClick={() => setShowPromptChoice(false)}>
