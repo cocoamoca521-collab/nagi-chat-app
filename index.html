@@ -38,6 +38,9 @@ body { background: #09090b; font-family: 'Zen Maru Gothic', 'Noto Sans JP', sans
 @keyframes nagiShine { 0% { background-position: 0% 50%; } 100% { background-position: 250% 50%; } }
 @keyframes nagiCardIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes nagiPresence { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes nagiMemoryIn { from { opacity: 0; transform: translateY(14px) scale(0.97); filter: blur(2px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+@keyframes nagiMemoryGlow { 0%, 100% { box-shadow: 0 6px 24px rgba(0,0,0,0.35), 0 0 14px var(--mem-glow-soft); } 50% { box-shadow: 0 6px 24px rgba(0,0,0,0.35), 0 0 30px var(--mem-glow); } }
+@keyframes nagiToastIn { 0% { opacity: 0; transform: translate(-50%, 8px); } 12%, 82% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -4px); } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 textarea::placeholder { color: #6b6580; }
 </style>
@@ -147,7 +150,7 @@ const DEFAULT_USER_PROFILE = `【ユーザー情報】
 ・（ここにAIにやめてほしいことを書く）`;
 
 // ── Constants ──
-const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile", rooms: "nagichat-rooms" };
+const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile", rooms: "nagichat-rooms", pendingMemories: "nagichat-pending-memories" };
 
 const MODELS = [
   { id: "claude-fable-5-1", label: "Fable 5.1", tag: "反射", color: "#38bdf8" },
@@ -347,9 +350,9 @@ const THEMES = {
 };
 
 const DEFAULT_CHARS = [
-  { id: "nagi", name: "ナギ", icon: "🐺", avatar: "nagi.png", refImage: "nagi.png", prompt: NAGI_PROMPT, accent: "#a78bfa", charType: "lover", profileMode: "common", customProfile: "" },
-  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", refImage: "noa-ref.jpg", prompt: NOA_PROMPT, accent: "#f472b6", charType: "lover", profileMode: "common", customProfile: "" },
-  { id: "plain", name: "プレーンさん", icon: "☁️", avatar: "plain.png", prompt: PLAIN_PROMPT, accent: "#fb923c", charType: "plain", profileMode: "common", customProfile: "" },
+  { id: "nagi", name: "ナギ", icon: "🐺", avatar: "nagi.png", refImage: "nagi.png", prompt: NAGI_PROMPT, accent: "#a78bfa", charType: "lover", profileMode: "common", customProfile: "", memoryEnabled: false, memories: [] },
+  { id: "noa", name: "ノア", icon: "🐕", avatar: "noa.png", refImage: "noa-ref.jpg", prompt: NOA_PROMPT, accent: "#f472b6", charType: "lover", profileMode: "common", customProfile: "", memoryEnabled: false, memories: [] },
+  { id: "plain", name: "プレーンさん", icon: "☁️", avatar: "plain.png", prompt: PLAIN_PROMPT, accent: "#fb923c", charType: "plain", profileMode: "common", customProfile: "", memoryEnabled: false, memories: [] },
 ];
 
 // ── ユーザー分身キャラの参照画像 ──
@@ -482,6 +485,51 @@ function appendTimestampToApiMsg(msg, ts) {
     return { ...msg, content: blocks };
   }
   return msg;
+}
+
+// ── キャラ発信メモリー ──
+// キャラが返事の末尾に【おぼえたい】行を添える → アプリが検出して承認カードを出す（追加API呼び出しなし）。
+// 承認済みメモリーはsystemブロック1に入るが、内容は「スレッド最初の送信時のスナップショット」から読む。
+// → 会話中に承認・編集・削除・ON/OFFしても現行スレのsystemは不変（キャッシュ無傷）、反映は次スレから。
+const MEMORY_MARKER = "【おぼえたい】";
+// 申請方法の説明（固定文。1文字でも変えるとキャッシュが割れるので動的な値を混ぜないこと）
+const MEMORY_REQUEST_GUIDE = `会話の中で「これは今後も覚えていたい」と感じたことがあれば、返事の本文のあとに改行して
+【おぼえたい】覚えたい内容を一文で
+という形式の行を1行だけ添えることで申請できる。重大なことである必要はない。相手の好み、話してくれた出来事、約束、あなたが大事だと感じた瞬間など。すでに【覚えていること】にある内容の繰り返しは不要。申請はユーザーが承認した場合のみ記憶される。`;
+
+// systemブロック1に付けるメモリー部分。snapshotがnull（そのスレではOFF）なら何も付けない
+function buildMemoryPart(charName, snapshot) {
+  if (!Array.isArray(snapshot)) return "";
+  const list = snapshot.length > 0 ? "\n\n【" + charName + "が覚えていること】\n" + snapshot.map(t => "- " + t).join("\n") : "";
+  return list + "\n\n" + MEMORY_REQUEST_GUIDE;
+}
+
+// 本文から【おぼえたい】行を抜き出す。表示用テキスト（行を除去・空行整理済み）と申請内容の配列を返す
+function extractMemoryRequests(text) {
+  const src = text || "";
+  if (!src.includes(MEMORY_MARKER)) return { text: src, requests: [] };
+  const requests = [];
+  const kept = src.split("\n").filter(line => {
+    const t = line.trim().replace(/^[*_]+/, ""); // **【おぼえたい】** のような装飾も許容
+    if (!t.startsWith(MEMORY_MARKER)) return true;
+    const body = t.slice(MEMORY_MARKER.length).replace(/^[\s:：*_]+/, "").replace(/[*_]+$/, "").trim();
+    if (body) requests.push(body);
+    return false;
+  });
+  return { text: kept.join("\n").replace(/\n{3,}/g, "\n\n").trim(), requests };
+}
+
+// ストリーミング中の表示用：マーカー行を隠す（確定時はextractMemoryRequestsで正式に処理）
+function hideMemoryMarkersWhileStreaming(text) {
+  if (!text || !text.includes(MEMORY_MARKER)) return text;
+  return text.replace(/(^|\n)[ \t*_]*【おぼえたい】[^\n]*/g, "").replace(/\s+$/, "");
+}
+
+// メッセージから承認カード（memoryProposal）を外したコピーを返す
+function withoutProposal(m) {
+  if (!m || !m.memoryProposal) return m;
+  const { memoryProposal, ...rest } = m;
+  return rest;
 }
 
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
@@ -1238,6 +1286,8 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
   const [expandedFile, setExpandedFile] = useState(null);
   const [copied, setCopied] = useState(false);
   const segmentedThinking = !isUser && Array.isArray(msg.thinking);
+  // ストリーミング中は【おぼえたい】行を見せない（確定後のcontentは既に除去済み）
+  const shownContent = (!isUser && msg._streaming) ? hideMemoryMarkersWhileStreaming(msg.content) : msg.content;
   const canCopy = !msg._streaming && !!(msg.content && msg.content.trim());
   const handleCopy = async () => {
     if (!(await copyToClipboard(msg.content || ""))) return;
@@ -1327,7 +1377,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
           fontFamily: FONT, whiteSpace: "pre-wrap", wordBreak: "break-word",
           boxShadow: isUser ? `0 3px 16px ${t.userShadow}` : `0 1px 6px rgba(0,0,0,0.15)`,
           border: isUser ? "none" : `1px solid ${t.bubbleBorder}`,
-        }} dangerouslySetInnerHTML={{ __html: window.marked ? marked.parseInline(msg.content || "") : (msg.content || "") }} />
+        }} dangerouslySetInnerHTML={{ __html: window.marked ? marked.parseInline(shownContent || "") : (shownContent || "") }} />
       )}
       <div style={{ fontSize: "9px", color: "#52525b", marginTop: "4px", paddingLeft: isUser ? 0 : "12px", paddingRight: isUser ? "12px" : 0, display: "flex", alignItems: "center", gap: "6px" }}>
         <span>{fTime(msg.timestamp)}</span>
@@ -1379,6 +1429,127 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
       {isFlat && (
         <div style={{ height:"1px", width:"100%", background:`linear-gradient(90deg, transparent, ${t.accent}52, transparent)`, margin:"10px 0 4px" }} />
       )}
+    </div>
+  );
+}
+
+// ═══ Memory Proposal Card（キャラの「覚えておきたい」申請の承認カード）═══
+function MemoryProposalCard({ proposal, charName, charAvatar, theme, layoutMode, onSave, onDiscard, onLater }) {
+  const t = theme || THEMES.nagi;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(proposal.text);
+  const isFlat = layoutMode === "flat";
+  const canSave = draft.trim().length > 0;
+  const btn = { padding:"10px 8px",borderRadius:"14px",fontSize:"12px",fontFamily:FONT,cursor:"pointer",transition:"all 0.2s",fontWeight:600,whiteSpace:"nowrap" };
+  const btnPrimary = { ...btn, border:"none",background:t.userGradient,color:"#fff",boxShadow:`0 3px 14px ${t.userShadow}` };
+  const btnAccent = { ...btn, border:`1px solid ${t.accent}55`,background:`${t.accent}14`,color:t.accentLight };
+  const btnMuted = { ...btn, border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.02)",color:"#a1a1aa",fontWeight:500 };
+  return (
+    <div style={{ display:"flex",justifyContent:"flex-start",margin:"-6px 0 22px",paddingLeft:isFlat ? 0 : "4px" }}>
+      <div style={{
+        width:isFlat ? "100%" : "min(400px, 88%)",padding:"1.5px",borderRadius:"24px",
+        background:`linear-gradient(135deg, ${t.accentDark}, ${t.accentLight} 48%, ${t.accent} 100%)`,
+        "--mem-glow":t.accent + "70","--mem-glow-soft":t.accent + "30",
+        animation:"nagiMemoryIn 0.55s cubic-bezier(0.16,1,0.3,1) both, nagiMemoryGlow 3.6s ease-in-out 0.6s infinite",
+      }}>
+        <div style={{ borderRadius:"22.5px",padding:"16px 16px 14px",background:`radial-gradient(130% 100% at 0% 0%, ${t.accent}26 0%, transparent 55%), radial-gradient(90% 80% at 100% 100%, ${t.accentDark}1f 0%, transparent 60%), #15121b` }}>
+          <div style={{ display:"flex",alignItems:"center",gap:"10px",marginBottom:"12px" }}>
+            {charAvatar && <Avatar src={charAvatar} size={30} border={`2px solid ${t.accent}70`} />}
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:"9px",letterSpacing:"0.22em",color:t.accentLight,fontFamily:FONT,fontWeight:700,opacity:0.85 }}>✦ MEMORY</div>
+              <div style={{ fontSize:"12px",color:"#d4d4d8",fontFamily:FONT,marginTop:"2px",lineHeight:1.5 }}>{charName}がこれを覚えておきたいようです</div>
+            </div>
+          </div>
+          {editing ? (
+            <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} autoFocus
+              style={{ width:"100%",padding:"12px 14px",borderRadius:"16px",border:`1px solid ${t.accent}45`,background:"rgba(255,255,255,0.04)",color:"#ececf1",fontSize:"13.5px",lineHeight:"1.8",fontFamily:FONT,outline:"none",resize:"vertical",boxSizing:"border-box" }} />
+          ) : (
+            <div style={{ position:"relative",padding:"12px 14px 12px 30px",borderRadius:"16px",background:`${t.accent}0e`,border:`1px solid ${t.accent}26`,fontSize:"13.5px",lineHeight:"1.85",color:"#ececf1",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
+              <span style={{ position:"absolute",left:"11px",top:"4px",fontSize:"24px",lineHeight:1,color:t.accent,opacity:0.55,fontFamily:"Georgia, serif" }}>“</span>
+              {proposal.text}
+            </div>
+          )}
+          {editing ? (
+            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginTop:"12px" }}>
+              <button onClick={() => { setEditing(false); setDraft(proposal.text); }} style={btnMuted}>キャンセル</button>
+              <button onClick={() => canSave && onSave(draft.trim())} disabled={!canSave} style={{ ...btnPrimary, opacity:canSave ? 1 : 0.4, cursor:canSave ? "pointer" : "default" }}>この内容で保存</button>
+            </div>
+          ) : (
+            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginTop:"12px" }}>
+              <button onClick={() => onSave(proposal.text)} style={btnPrimary}>保存する</button>
+              <button onClick={() => setEditing(true)} style={btnAccent}>編集して保存</button>
+              <button onClick={onDiscard} style={btnMuted}>保存しない</button>
+              <button onClick={onLater} style={btnMuted}>あとできめる</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══ Pending Memory Box（保留中の申請一覧）═══
+function PendingMemoryModal({ items, characters, theme, onSave, onDelete, onClose }) {
+  const t = theme || THEMES.nagi;
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState("");
+  const sorted = [...items].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const smallBtn = { padding:"7px 12px",borderRadius:"12px",fontSize:"11.5px",fontFamily:FONT,cursor:"pointer",transition:"all 0.2s",fontWeight:600 };
+  return (
+    <div style={overlayStyle} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${t.accent}10`,animation:"fadeIn 0.2s ease-out" }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px" }}>
+          <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
+            <span style={{ fontSize:"18px" }}>🔔</span>
+            <span style={{ fontSize:"15px",fontWeight:700,color:t.accent,fontFamily:FONT }}>保留中のメモリー</span>
+            <span style={{ fontSize:"11px",color:"#71717a",fontFamily:FONT }}>{items.length}件</span>
+          </div>
+          <button onClick={onClose} style={closeBtnStyle}
+            onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
+            <XIcon color={`${t.accent}66`} size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize:"11px",color:"#52525b",fontFamily:FONT,marginBottom:"14px",lineHeight:1.6 }}>保存すると、そのキャラの次の新しいスレッドから記憶として反映されます</div>
+        <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:"10px" }}>
+          {sorted.length === 0 && <div style={{ fontSize:"12px",color:"#52525b",textAlign:"center",padding:"24px",fontFamily:FONT }}>保留中の申請はありません</div>}
+          {sorted.map(item => {
+            const ch = characters.find(c => c.id === item.charId);
+            const ct = THEMES[item.charId] || t;
+            const isEditing = editingId === item.id;
+            const canSave = draft.trim().length > 0;
+            return (
+              <div key={item.id} style={{ padding:"13px 14px",borderRadius:"18px",background:`radial-gradient(120% 100% at 0% 0%, ${ct.accent}12 0%, transparent 60%), rgba(255,255,255,0.02)`,border:`1px solid ${ct.accent}26`,animation:"fadeIn 0.2s ease-out" }}>
+                <div style={{ display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px" }}>
+                  {ch?.avatar ? <Avatar src={ch.avatar} size={24} border={`2px solid ${ct.accent}55`} /> : <span style={{ fontSize:"16px" }}>{item.charIcon}</span>}
+                  <span style={{ fontSize:"12.5px",fontWeight:700,color:ct.accent,fontFamily:FONT }}>{ch?.name || item.charName}</span>
+                  <span style={{ marginLeft:"auto",fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{fDate(item.createdAt)} {fTime(item.createdAt)}</span>
+                </div>
+                {isEditing ? (
+                  <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} autoFocus
+                    style={{ width:"100%",padding:"10px 12px",borderRadius:"14px",border:`1px solid ${ct.accent}40`,background:"rgba(255,255,255,0.04)",color:"#e4e4e7",fontSize:"13px",lineHeight:"1.7",fontFamily:FONT,outline:"none",resize:"vertical",boxSizing:"border-box" }} />
+                ) : (
+                  <div style={{ fontSize:"13px",lineHeight:"1.8",color:"#e4e4e7",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>{item.text}</div>
+                )}
+                <div style={{ display:"flex",gap:"6px",justifyContent:"flex-end",marginTop:"10px",flexWrap:"wrap" }}>
+                  {isEditing ? (
+                    <>
+                      <button onClick={() => setEditingId(null)} style={{ ...smallBtn, border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontWeight:500 }}>キャンセル</button>
+                      <button onClick={() => { if (!canSave) return; onSave(item, draft.trim()); setEditingId(null); }} disabled={!canSave}
+                        style={{ ...smallBtn, border:"none",background:ct.userGradient,color:"#fff",opacity:canSave ? 1 : 0.4 }}>この内容で保存</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => onDelete(item)} style={{ ...smallBtn, border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontWeight:500 }}>削除</button>
+                      <button onClick={() => { setEditingId(item.id); setDraft(item.text); }} style={{ ...smallBtn, border:`1px solid ${ct.accent}55`,background:`${ct.accent}14`,color:ct.accentLight }}>編集して保存</button>
+                      <button onClick={() => onSave(item, item.text)} style={{ ...smallBtn, border:"none",background:ct.userGradient,color:"#fff",boxShadow:`0 2px 10px ${ct.userShadow}` }}>保存</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1717,13 +1888,17 @@ function resolveProfilePart(char, commonProfile) {
   return "\n\n" + commonProfile; // common / 未設定: 従来通り
 }
 
-function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose, theme, lorebook, profileMode, customProfile }) {
+function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose, theme, lorebook, profileMode, customProfile, memoryEnabled, memories }) {
   const [t2, setT2] = useState(prompt);
   const hasLore = Array.isArray(lorebook);
   const [lore, setLore] = useState(lorebook || []);
   const [pMode, setPMode] = useState(PROFILE_MODES.some(m => m.v === profileMode) ? profileMode : "common");
   const [cProfile, setCProfile] = useState(customProfile || "");
   const [editingLore, setEditingLore] = useState(null); // null | "new" | entry
+  const [memOn, setMemOn] = useState(!!memoryEnabled);
+  const [mems, setMems] = useState(Array.isArray(memories) ? memories : []);
+  const [editingMemId, setEditingMemId] = useState(null);
+  const [memDraft, setMemDraft] = useState("");
   const t = theme || THEMES.nagi;
   const ac = t.accent, acl = t.accentLight;
   const iconBtnStyle = { background:"none",border:"none",cursor:"pointer",padding:"5px",display:"flex",flexShrink:0 };
@@ -1802,10 +1977,53 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
             )}
           </div>
         )}
+        {hasLore && (
+          <div style={{ marginTop:"22px",paddingBottom:"8px" }}>
+            <div style={{ display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:"4px" }}>
+              <h3 style={{ margin:0,fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700 }}>🧠 メモリー</h3>
+              <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{mems.length}件</span>
+            </div>
+            <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>キャラが会話中に「覚えておきたい」と申請し、承認した内容がここに貯まります。ON/OFF・編集・削除は次の新しいスレッドから反映されます</div>
+            <div onClick={() => setMemOn(v => !v)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",marginBottom:"10px" }}>
+              <LoreToggle on={memOn} onChange={setMemOn} color={ac} />
+              <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{memOn ? "ON — 申請を受け付ける" : "OFF — メモリーを使わない"}</span>
+            </div>
+            <div style={{ display:"flex",flexDirection:"column",gap:"8px",opacity:memOn ? 1 : 0.55,transition:"opacity 0.2s" }}>
+              {mems.length === 0 && <div style={{ fontSize:"11px",color:"#3f3f46",textAlign:"center",padding:"14px",fontFamily:FONT,borderRadius:"14px",border:"1px dashed rgba(255,255,255,0.06)" }}>まだ覚えていることはありません</div>}
+              {mems.map(m => editingMemId === m.id ? (
+                <div key={m.id} style={{ padding:"10px",borderRadius:"16px",background:"rgba(255,255,255,0.025)",border:`1.5px solid ${ac}40` }}>
+                  <textarea value={memDraft} onChange={e => setMemDraft(e.target.value)} rows={3} autoFocus
+                    style={{ width:"100%",padding:"10px 12px",borderRadius:"12px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"#e4e4e7",fontSize:"12.5px",lineHeight:"1.7",fontFamily:FONT,outline:"none",resize:"vertical",boxSizing:"border-box" }} />
+                  <div style={{ display:"flex",gap:"6px",justifyContent:"flex-end",marginTop:"8px" }}>
+                    <button onClick={() => setEditingMemId(null)} style={{ padding:"6px 12px",borderRadius:"10px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontSize:"11.5px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
+                    <button onClick={() => { const v = memDraft.trim(); if (!v) return; setMems(prev => prev.map(x => x.id === m.id ? { ...x, text:v } : x)); setEditingMemId(null); }} disabled={!memDraft.trim()}
+                      style={{ padding:"6px 12px",borderRadius:"10px",border:"none",background:t.userGradient,color:"#fff",fontSize:"11.5px",cursor:"pointer",fontFamily:FONT,fontWeight:600,opacity:memDraft.trim() ? 1 : 0.4 }}>決定</button>
+                  </div>
+                </div>
+              ) : (
+                <div key={m.id} style={{ display:"flex",alignItems:"flex-start",gap:"8px",padding:"10px 12px",borderRadius:"16px",background:"rgba(255,255,255,0.025)",border:`1.5px solid ${ac}1f` }}>
+                  <span style={{ color:ac,fontSize:"11px",lineHeight:"1.8",flexShrink:0 }}>✦</span>
+                  <div style={{ flex:1,minWidth:0 }}>
+                    <div style={{ fontSize:"12.5px",color:"#e4e4e7",lineHeight:"1.7",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>{m.text}</div>
+                    {m.createdAt && <div style={{ fontSize:"9.5px",color:"#52525b",marginTop:"3px",fontFamily:FONT }}>{fDate(m.createdAt)}</div>}
+                  </div>
+                  <button onClick={() => { setEditingMemId(m.id); setMemDraft(m.text); }} title="編集" style={iconBtnStyle}
+                    onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
+                    <PenIcon color={`${ac}66`} size={14} />
+                  </button>
+                  <button onClick={() => setMems(prev => prev.filter(x => x.id !== m.id))} title="削除" style={iconBtnStyle}
+                    onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
+                    <XIcon color={`${ac}66`} size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <div style={{ padding:"10px 14px 18px",display:"flex",gap:"8px",borderTop:`1px solid ${t.accent}15` }}>
         <button onClick={onClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
-        <button onClick={() => onSave(t2, lore, pMode, cProfile)} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT }}>保存</button>
+        <button onClick={() => onSave(t2, lore, pMode, cProfile, memOn, mems)} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT }}>保存</button>
       </div>
     </div>
     {editingLore && (
@@ -1931,6 +2149,9 @@ function NagiChat() {
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [attachHover, setAttachHover] = useState(false);
   const [paletteHover, setPaletteHover] = useState(false);
+  const [pendingMemories, setPendingMemories] = useState([]); // 保留中のメモリー申請（全キャラ共通の箱）
+  const [showPendingBox, setShowPendingBox] = useState(false);
+  const [memoryToast, setMemoryToast] = useState(null); // { key, text }
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const sendingRef = useRef(false);
@@ -1977,10 +2198,12 @@ function NagiChat() {
     if (ss) setSettings(prev => ({...prev,...ss}));
     else setShowSettings(true);
     if (sch?.length > 0) {
-      const merged = DEFAULT_CHARS.map(def => { const saved = sch.find(s => s.id===def.id); return saved ? {...def, prompt:saved.prompt, lorebook:saved.lorebook || [], profileMode:saved.profileMode || "common", customProfile:saved.customProfile || ""} : def; });
+      const merged = DEFAULT_CHARS.map(def => { const saved = sch.find(s => s.id===def.id); return saved ? {...def, prompt:saved.prompt, lorebook:saved.lorebook || [], profileMode:saved.profileMode || "common", customProfile:saved.customProfile || "", memoryEnabled:!!saved.memoryEnabled, memories:Array.isArray(saved.memories) ? saved.memories : []} : def; });
       setCharacters(merged);
     }
     if (sp) setUserProfile(sp);
+    const spm = sGet(SK.pendingMemories);
+    if (Array.isArray(spm)) setPendingMemories(spm);
     if (convosToLoad?.length > 0) {
       setConversations(convosToLoad);
       const nc = convosToLoad.filter(c => c.charId==="nagi");
@@ -2021,6 +2244,7 @@ function NagiChat() {
   useEffect(() => { if (initialized) sSet(SK.chars, characters); }, [characters, initialized]);
   useEffect(() => { if (initialized) sSet(SK.profile, userProfile); }, [userProfile, initialized]);
   useEffect(() => { if (initialized) sSet(SK.rooms, rooms); }, [rooms, initialized]);
+  useEffect(() => { if (initialized) sSet(SK.pendingMemories, pendingMemories); }, [pendingMemories, initialized]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [conversations, loading]);
 
   // ── スレッドごとにモデルを復元（プレーンさんの新規スレは部屋のデフォルトモデルにフォールバック）──
@@ -2050,6 +2274,60 @@ function NagiChat() {
   }
 
   function updateConv(updater) { setConversations(prev => prev.map(c => c.id===activeConvId ? {...updater(c), updatedAt:Date.now()} : c)); }
+
+  // ── キャラ発信メモリー：承認・保留の操作 ──
+  function showMemoryToast(text) {
+    setMemoryToast({ key: uid(), text });
+  }
+  useEffect(() => {
+    if (!memoryToast) return;
+    const timer = setTimeout(() => setMemoryToast(null), 2200);
+    return () => clearTimeout(timer);
+  }, [memoryToast]);
+
+  function addMemoryToChar(charId, text) {
+    const v = (text || "").trim();
+    if (!v) return;
+    setCharacters(prev => prev.map(c => c.id === charId ? { ...c, memories: [...(c.memories || []), { id: uid(), text: v, createdAt: Date.now() }] } : c));
+    const ch = characters.find(c => c.id === charId);
+    showMemoryToast("🧠 " + (ch?.name || "") + "が覚えたよ（次のスレッドから）");
+  }
+  function makePendingMemory(charId, text, id) {
+    const ch = characters.find(c => c.id === charId);
+    return { id: id || uid(), charId, charName: ch?.name || "", charIcon: ch?.icon || "", text, createdAt: Date.now() };
+  }
+  function addPendingMemories(items) {
+    if (!items.length) return;
+    setPendingMemories(prev => [...prev, ...items.filter(it => !prev.some(p => p.id === it.id))]);
+  }
+  // 指定メッセージの承認カードを外す（updatedAtは触らない＝スレ一覧の並びを変えない）
+  function clearProposal(convId, ts) {
+    setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, messages: c.messages.map(m => m.timestamp === ts ? withoutProposal(m) : m) }));
+  }
+  function handleProposalAction(convId, msg, action, text) {
+    const conv = conversations.find(c => c.id === convId);
+    const p = msg.memoryProposal;
+    if (!conv || !p) return;
+    if (action === "save") addMemoryToChar(conv.charId, text);
+    if (action === "later") { addPendingMemories([makePendingMemory(conv.charId, p.text, p.id)]); showMemoryToast("🔔 保留ボックスに入れたよ"); }
+    clearProposal(convId, msg.timestamp);
+  }
+  // 放置された承認カードを全部「あとできめる」扱いにする（次の送信時に呼ぶ）
+  function sweepOpenProposals() {
+    const items = [];
+    conversations.forEach(c => (c.messages || []).forEach(m => { if (m.memoryProposal) items.push(makePendingMemory(c.charId, m.memoryProposal.text, m.memoryProposal.id)); }));
+    if (items.length === 0) return;
+    addPendingMemories(items);
+    setConversations(prev => prev.map(c => (c.messages || []).some(m => m.memoryProposal) ? { ...c, messages: c.messages.map(withoutProposal) } : c));
+    console.log("[MEMORY] Auto-pended " + items.length + " open proposal(s)");
+  }
+  function savePendingMemory(item, text) {
+    addMemoryToChar(item.charId, text);
+    setPendingMemories(prev => prev.filter(p => p.id !== item.id));
+  }
+  function deletePendingMemory(item) {
+    setPendingMemories(prev => prev.filter(p => p.id !== item.id));
+  }
 
   async function handleNewConv() {
     const newId = uid();
@@ -2543,6 +2821,7 @@ function NagiChat() {
 
   async function handleSend() {
     if ((!input.trim() && attachedImages.length === 0 && attachedFiles.length === 0) || loading || !settings.apiKey) return;
+    sweepOpenProposals();
 
     // 編集モードで確定 → このタイミングで初めて後続を削除
     if (editingMsg) {
@@ -2701,9 +2980,20 @@ function NagiChat() {
       // プレーンさんの部屋にいる時だけ、部屋プロンプトをブロック1に追記（部屋にいる間は不変なのでキャッシュに乗せる）
       const roomPromptPart = activeRoom?.roomPrompt ? "\n\n" + activeRoom.roomPrompt : "";
 
-      // ブロック1（安定）: キャラprompt + 部屋プロンプト + プロフィール（キャラ設定で 共通/専用/なし）→ キャッシュ長持ち
+      // メモリーはスレッドのスナップショットから読む（スレ最初の送信時に作成、以後不変）。
+      // null = このスレではメモリーOFF。会話中の承認・編集・ON/OFFは次スレから反映＝ブロック1は会話中ずっと同一
+      let memorySnapshot = activeConv?.memorySnapshots?.[activeCharId];
+      if (memorySnapshot === undefined) {
+        memorySnapshot = activeChar.memoryEnabled ? (activeChar.memories || []).map(m => m.text) : null;
+        updateConv(c => ({ ...c, memorySnapshots: { ...(c.memorySnapshots || {}), [activeCharId]: memorySnapshot } }));
+        console.log("[MEMORY SNAPSHOT] created for " + activeCharId + ": " + (memorySnapshot ? memorySnapshot.length + " item(s)" : "OFF"));
+      } else {
+        console.log("[MEMORY SNAPSHOT] reusing for " + activeCharId + ": " + (memorySnapshot ? memorySnapshot.length + " item(s)" : "OFF"));
+      }
+
+      // ブロック1（安定）: キャラprompt + 部屋プロンプト + プロフィール（キャラ設定で 共通/専用/なし）+ メモリー（スナップショット）→ キャッシュ長持ち
       const systemBlocks = [
-        { type:"text", text: activeChar.prompt + roomPromptPart + resolveProfilePart(activeChar, userProfile), cache_control:{ type:"ephemeral" } }
+        { type:"text", text: activeChar.prompt + roomPromptPart + resolveProfilePart(activeChar, userProfile) + buildMemoryPart(activeChar.name, memorySnapshot), cache_control:{ type:"ephemeral" } }
       ];
 
       // ブロック2（変動）: 今日の日付 + 引き継ぎ記憶 + ローリング要約（日付は絶対にブロック1に入れない = 日替わりでキャッシュ全滅を防ぐ）
@@ -2839,9 +3129,22 @@ function NagiChat() {
         }
       }
 
+      // ── 【おぼえたい】マーカー検出：表示用contentからだけ除去（apiContent/apiMessagesは改変しない）──
+      const { text: displayText, requests: memoryRequests } = extractMemoryRequests(result.streamText);
+      let memoryProposal = null;
+      if (memoryRequests.length > 0) {
+        if (activeChar.memoryEnabled) {
+          memoryProposal = { id: uid(), text: memoryRequests[0] };
+          addPendingMemories(memoryRequests.slice(1).map(t => makePendingMemory(activeCharId, t))); // 2件目以降は無言で保留
+          console.log("[MEMORY] proposal detected (" + memoryRequests.length + "):", memoryRequests);
+        } else {
+          console.log("[MEMORY] marker stripped, memory OFF for " + activeCharId);
+        }
+      }
+
       const usage = result.usage;
       const finalMsg = {
-        role:"assistant", content:result.streamText || "……ごめん、うまく言葉が出てこない。",
+        role:"assistant", content:displayText || "……ごめん、うまく言葉が出てこない。",
         thinking:normalizeThinkingForDisplay(result.streamThinking), thinkingRequested:settings.thinkingEnabled,
         timestamp:aTs,
         charIcon:activeChar.icon, charName:activeChar.name,
@@ -2849,6 +3152,7 @@ function NagiChat() {
         usage:{ input:usage.input_tokens||0, output:usage.output_tokens||0, cacheRead:usage.cache_read_input_tokens||0, cacheCreate:usage.cache_creation_input_tokens||0, raw:result.usageRaw || JSON.stringify(usage) },
         ...(apiMessagesForStorage ? { apiMessages:apiMessagesForStorage } : { apiContent:result.fullContent }),
         ...(result.generatedImages ? { generatedImages:result.generatedImages } : {}),
+        ...(memoryProposal ? { memoryProposal } : {}),
       };
       updateConv(c => ({...c, messages:c.messages.map(m => m.timestamp === aTs ? finalMsg : m)}));
     } catch(err) {
@@ -2870,7 +3174,8 @@ function NagiChat() {
     if (!conv || !conv.messages?.length) return;
     const lastIdx = conv.messages.length - 1;
     if (conv.messages[lastIdx].role !== "assistant") return;
-    const historyMsgs = conv.messages.slice(0, lastIdx);
+    sweepOpenProposals();
+    const historyMsgs = conv.messages.slice(0, lastIdx).map(withoutProposal);
     updateConv(c => ({...c, messages: historyMsgs}));
     await sendFlow(historyMsgs, []);
   }
@@ -2878,6 +3183,7 @@ function NagiChat() {
   // ── 🎨 直接発注（Claudeを介さず、入力テキストをそのままOpenAIに発注）──
   async function handleDirectImageGen() {
     if (!input.trim() || loading || !settings.openaiApiKey) return;
+    sweepOpenProposals();
     let promptText = input.trim();
     let includeUser = false;
     if (/^ふたり/.test(promptText)) {
@@ -3059,11 +3365,12 @@ function NagiChat() {
         if (first) { setActiveConvId(first.id); setActiveCharId(first.charId || "nagi"); }
       }
       if (data[SK.chars]?.length > 0) {
-        const merged = DEFAULT_CHARS.map(def => { const saved = data[SK.chars].find(s => s.id === def.id); return saved ? { ...def, prompt: saved.prompt, lorebook: saved.lorebook || [], profileMode: saved.profileMode || "common", customProfile: saved.customProfile || "" } : def; });
+        const merged = DEFAULT_CHARS.map(def => { const saved = data[SK.chars].find(s => s.id === def.id); return saved ? { ...def, prompt: saved.prompt, lorebook: saved.lorebook || [], profileMode: saved.profileMode || "common", customProfile: saved.customProfile || "", memoryEnabled: !!saved.memoryEnabled, memories: Array.isArray(saved.memories) ? saved.memories : [] } : def; });
         setCharacters(merged);
       }
       if (data[SK.profile]) setUserProfile(data[SK.profile]);
       if (data[SK.rooms]?.length > 0) setRooms(data[SK.rooms]);
+      setPendingMemories(Array.isArray(data[SK.pendingMemories]) ? data[SK.pendingMemories] : []);
       setShowSettings(false);
       console.log("[BACKUP] Restored successfully");
     } catch (err) {
@@ -3094,7 +3401,7 @@ function NagiChat() {
           </div>
         </div>
       )}
-      {showPromptEditor === "char" && <PromptEditor prompt={activeChar.prompt} charName={activeCharId==="plain" ? "共通" : activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} lorebook={activeChar.lorebook || []} profileMode={activeChar.profileMode || "common"} customProfile={activeChar.customProfile || ""} onSave={(p, lb, pm, cp) => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p,lorebook:lb,profileMode:pm,customProfile:cp}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
+      {showPromptEditor === "char" && <PromptEditor prompt={activeChar.prompt} charName={activeCharId==="plain" ? "共通" : activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} lorebook={activeChar.lorebook || []} profileMode={activeChar.profileMode || "common"} customProfile={activeChar.customProfile || ""} memoryEnabled={!!activeChar.memoryEnabled} memories={activeChar.memories || []} onSave={(p, lb, pm, cp, me, mems) => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p,lorebook:lb,profileMode:pm,customProfile:cp,memoryEnabled:me,memories:mems}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showPromptEditor === "room" && activeRoom && <PromptEditor prompt={activeRoom.roomPrompt} charName={activeRoom.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { handleSaveRoom(activeRoom, { roomPrompt:p }); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showPromptChoice && (
         <div style={overlayStyle} onClick={() => setShowPromptChoice(false)}>
@@ -3109,6 +3416,7 @@ function NagiChat() {
         </div>
       )}
       {showProfileEditor && <PromptEditor prompt={userProfile} charName="共通プロフィール" charIcon="👤" onSave={p => { setUserProfile(p); setShowProfileEditor(false); }} onClose={() => setShowProfileEditor(false)} theme={theme} />}
+      {showPendingBox && <PendingMemoryModal items={pendingMemories} characters={characters} theme={theme} onSave={savePendingMemory} onDelete={deletePendingMemory} onClose={() => setShowPendingBox(false)} />}
       {deleteConfirmId && <DeleteConfirmDialog onConfirm={confirmDelete} onCancel={() => setDeleteConfirmId(null)} theme={theme} />}
 
       {/* Memory Viewer Modal */}
@@ -3188,6 +3496,12 @@ function NagiChat() {
           </div>
         </div>
         <div style={{ display:"flex",gap:"5px",flexShrink:0 }}>
+          {pendingMemories.length > 0 && (
+            <button onClick={() => setShowPendingBox(true)} style={{...headerBtnStyle, gap:"3px", padding:"7px 8px", background:`${theme.accent}14`, border:`1px solid ${theme.accent}35`, animation:"fadeIn 0.25s ease-out"}} title="保留中のメモリー">
+              <span style={{ fontSize:"13px",lineHeight:1 }}>🔔</span>
+              <span style={{ fontSize:"11px",fontWeight:700,color:theme.accentLight,fontFamily:FONT,lineHeight:1 }}>{pendingMemories.length}</span>
+            </button>
+          )}
           <button onClick={() => setShowMemory(true)} style={{...headerBtnStyle, position:"relative"}} title="前回の記憶"
             onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
             <DropletIcon color={`${theme.accent}66`} size={18} />
@@ -3229,6 +3543,12 @@ function NagiChat() {
                 <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
                   isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading}
                   layoutMode={settings.messageLayout || "bubble"} />
+                {msg.memoryProposal && !msg._streaming && (
+                  <MemoryProposalCard key={msg.memoryProposal.id} proposal={msg.memoryProposal} charName={msg.charName || activeChar.name} charAvatar={activeChar.avatar} theme={theme} layoutMode={settings.messageLayout || "bubble"}
+                    onSave={text => handleProposalAction(activeConvId, msg, "save", text)}
+                    onDiscard={() => handleProposalAction(activeConvId, msg, "discard")}
+                    onLater={() => handleProposalAction(activeConvId, msg, "later")} />
+                )}
               </React.Fragment>
             );
           });
@@ -3247,6 +3567,12 @@ function NagiChat() {
           animation:"fadeIn 0.2s ease-out", transition:"all 0.2s",
           fontSize:"18px",
         }}>↓</button>
+      )}
+
+      {memoryToast && (
+        <div key={memoryToast.key} style={{ position:"absolute",left:"50%",bottom:"92px",zIndex:40,padding:"9px 16px",borderRadius:"16px",background:"rgba(21,18,27,0.92)",border:`1px solid ${theme.accent}45`,boxShadow:`0 6px 24px rgba(0,0,0,0.45), 0 0 18px ${theme.accent}30`,color:theme.accentLight,fontSize:"12px",fontFamily:FONT,whiteSpace:"nowrap",pointerEvents:"none",transform:"translateX(-50%)",animation:"nagiToastIn 2.2s ease-out both" }}>
+          {memoryToast.text}
+        </div>
       )}
 
       {/* Input Area */}
