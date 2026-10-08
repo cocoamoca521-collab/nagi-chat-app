@@ -232,6 +232,39 @@ function calcMessageCost(msg, modelId) {
   return { cost, unknown: p.unknown };
 }
 
+// 1メッセージの概算コスト（assistant・usage・モデル情報があるものだけ）。月間集計とスレ別集計で共通
+function messageCostOf(m) {
+  if (m.role !== "assistant" || !m.usage) return null;
+  const modelId = m.modelActual || m.modelRequested;
+  if (!modelId) return null;
+  return { ...calcMessageCost(m, modelId), modelId };
+}
+
+// ── スレ別：累計コスト（会話のusage＋要約Haikuのusage）と現在のコンテキストサイズ ──
+function computeConvStats(conv) {
+  let total = 0, unknown = false, contextTokens = null;
+  const msgs = conv?.messages || [];
+  for (const m of msgs) {
+    const mc = messageCostOf(m);
+    if (!mc) continue;
+    total += mc.cost;
+    if (mc.unknown) unknown = true;
+  }
+  for (const [model, u] of Object.entries(conv?.summaryUsage || {})) {
+    const c = calcMessageCost({ usage: u }, model);
+    total += c.cost;
+    if (c.unknown) unknown = true;
+  }
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role !== "assistant" || !m.usage) continue;
+    // 直前送信の実測入力サイズ。画像生成ターンは2回目のリクエストの値（contextTokens）を優先
+    contextTokens = typeof m.contextTokens === "number" ? m.contextTokens : (m.usage.input || 0) + (m.usage.cacheRead || 0) + (m.usage.cacheCreate || 0);
+    break;
+  }
+  return { total, unknown, contextTokens, chunkCount: getSummaryChunks(conv).length };
+}
+
 // ── 今月分の概算使用額を全conversationsから集計 ──
 function computeMonthlyUsage(conversations) {
   const now = new Date();
@@ -240,10 +273,10 @@ function computeMonthlyUsage(conversations) {
   const byModel = {};
   for (const conv of conversations || []) {
     for (const m of conv.messages || []) {
-      if (m.role !== "assistant" || !m.usage || !m.timestamp || m.timestamp < monthStart) continue;
-      const modelId = m.modelActual || m.modelRequested;
-      if (!modelId) continue;
-      const { cost, unknown } = calcMessageCost(m, modelId);
+      if (!m.timestamp || m.timestamp < monthStart) continue;
+      const mc = messageCostOf(m);
+      if (!mc) continue;
+      const { cost, unknown, modelId } = mc;
       total += cost;
       if (!byModel[modelId]) byModel[modelId] = { cost: 0, unknown };
       byModel[modelId].cost += cost;
@@ -595,6 +628,67 @@ function withoutProposal(m) {
   if (!m || !m.memoryProposal) return m;
   const { memoryProposal, ...rest } = m;
   return rest;
+}
+
+// ── ローリング要約（ラチェット式・追記専用）──
+// 方針：生履歴が主役、要約は超長編時の保険。直近ROLLING_KEEP_TURNSユーザーターンは常に生で送る。
+// それより古い未要約領域がSUMMARY_CHUNK_TURNSターン分たまったら、その分だけを一度だけ要約して「章」として追記する。
+// 章は二度と再生成・編集しない → 分割位置（生履歴の先頭）は章の境界でしか動かず、キャッシュが切れるのは章追加時だけ。
+const ROLLING_KEEP_TURNS = 80;
+const SUMMARY_CHUNK_TURNS = 20;
+const SUMMARY_MODEL = "claude-haiku-5-5";
+
+// 会話の章リスト。旧形式（conv.summary / summaryUpTo）は第1章として読む
+function getSummaryChunks(conv) {
+  if (Array.isArray(conv?.summaryChunks)) return conv.summaryChunks;
+  if (conv?.summary) return [{ text: conv.summary, upToIdx: conv.summaryUpTo || 0, createdAt: 0 }];
+  return [];
+}
+// 旧形式の会話をsummaryChunks形式に変換（読み込み・復元時）
+function migrateSummary(conv) {
+  if (!conv || Array.isArray(conv.summaryChunks) || !conv.summary) return conv;
+  const { summary, ...rest } = conv;
+  return { ...rest, summaryChunks: getSummaryChunks(conv) };
+}
+// 送信に使える章（分割位置が履歴の長さに届かないもの。編集で履歴が短くなった場合に備える）
+function usableSummaryChunks(conv, msgCount) {
+  const out = [];
+  for (const c of getSummaryChunks(conv)) { if (c.upToIdx >= msgCount) break; out.push(c); }
+  return out;
+}
+// 次に作る章の範囲 { from, to }（to = 章に入らない最初のユーザー発言の位置）。作らないならnull
+function planNextSummaryChunk(msgs, chunks) {
+  const userIdx = [];
+  msgs.forEach((m, i) => { if (m.role === "user") userIdx.push(i); });
+  if (userIdx.length <= ROLLING_KEEP_TURNS) return null;
+  const keepFrom = userIdx[userIdx.length - ROLLING_KEEP_TURNS]; // 保持窓の先頭
+  const from = chunks.length ? chunks[chunks.length - 1].upToIdx : 0;
+  const after = userIdx.filter(i => i >= from);
+  if (after.length <= SUMMARY_CHUNK_TURNS) return null;
+  const to = after[SUMMARY_CHUNK_TURNS]; // from以降の20ターン分の直後
+  if (to > keepFrom) return null; // 保持窓にかかるならまだ作らない
+  return { from, to };
+}
+// そのアシスタントメッセージが生成されたときの分割位置（記録が無い旧メッセージは章の作成時刻から推定）
+function splitWhenProduced(m, chunks) {
+  if (typeof m.splitIdx === "number") return m.splitIdx;
+  let split = 0;
+  for (const c of chunks) if ((c.createdAt || 0) <= (m.timestamp || 0)) split = c.upToIdx;
+  return split;
+}
+// thinking / redacted_thinking を外す（空になったらfallbackのテキスト）
+function stripAllThinking(content, fallbackText) {
+  if (!Array.isArray(content)) return content;
+  const stripped = content.filter(b => b?.type !== "thinking" && b?.type !== "redacted_thinking");
+  return stripped.length > 0 ? stripped : (fallbackText || "…");
+}
+// 要約APIのusageを会話に累積（モデル別。スレ累計コストに含める）
+function addSummaryUsage(prev, model, u) {
+  const cur = (prev || {})[model] || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
+  return { ...(prev || {}), [model]: {
+    input: cur.input + (u.input_tokens || 0), output: cur.output + (u.output_tokens || 0),
+    cacheRead: cur.cacheRead + (u.cache_read_input_tokens || 0), cacheCreate: cur.cacheCreate + (u.cache_creation_input_tokens || 0),
+  } };
 }
 
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
@@ -2194,6 +2288,44 @@ function Sidebar({ conversations, activeId, activeChar, onSelect, onNew, onDelet
   );
 }
 
+// ═══ Thread Info（スレ別コスト・コンテキスト）═══
+function formatTokens(n) {
+  if (n == null) return "—";
+  return n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + "k" : String(n);
+}
+function ThreadInfoModal({ conv, theme, onClose }) {
+  const t = theme || THEMES.nagi;
+  const st = computeConvStats(conv);
+  const row = (label, value, sub) => (
+    <div style={{ display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:"12px",padding:"12px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.025)",border:`1px solid ${t.accent}18` }}>
+      <div>
+        <div style={{ fontSize:"12px",color:"#a1a1aa",fontFamily:FONT }}>{label}</div>
+        {sub && <div style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT,marginTop:"2px" }}>{sub}</div>}
+      </div>
+      <div style={{ fontSize:"17px",fontWeight:700,color:t.accentLight,fontFamily:FONT,whiteSpace:"nowrap" }}>{value}</div>
+    </div>
+  );
+  return (
+    <div style={overlayStyle} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"22px",width:"min(360px, 90vw)",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${t.accent}10`,animation:"fadeIn 0.2s ease-out" }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px" }}>
+          <span style={{ fontSize:"15px",fontWeight:700,color:t.accent,fontFamily:FONT }}>📊 このスレについて</span>
+          <button onClick={onClose} style={closeBtnStyle}
+            onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
+            <XIcon color={`${t.accent}66`} size={18} />
+          </button>
+        </div>
+        <div style={{ display:"flex",flexDirection:"column",gap:"8px" }}>
+          {row("累計コスト（概算）", "$" + st.total.toFixed(st.total < 1 ? 3 : 2) + (st.unknown ? "(?)" : ""), "会話＋あらすじ要約の合計")}
+          {row("現在のコンテキスト", st.contextTokens == null ? "—" : st.contextTokens.toLocaleString() + " tok", "直前の送信で実際に入力された量")}
+          {st.chunkCount > 0 && row("あらすじ", st.chunkCount + "章", "直近" + ROLLING_KEEP_TURNS + "ターンより前を要約済み")}
+        </div>
+        <div style={{ fontSize:"9px",color:"#3f3f46",fontFamily:FONT,marginTop:"12px",lineHeight:1.6 }}>※アプリ経由の概算。画像生成(OpenAI)・失敗したリクエストは含みません</div>
+      </div>
+    </div>
+  );
+}
+
 // ═══ Status Badges ═══
 function StatusBadges({ model, effort, thinkingEnabled, webSearch }) {
   const m = MODELS.find(x => x.id===model) || MODELS[0];
@@ -2235,10 +2367,12 @@ function NagiChat() {
   const [paletteHover, setPaletteHover] = useState(false);
   const [pendingMemories, setPendingMemories] = useState([]); // 保留中のメモリー申請（全キャラ共通の箱）
   const [showPendingBox, setShowPendingBox] = useState(false);
+  const [showThreadInfo, setShowThreadInfo] = useState(false);
   const [memoryToast, setMemoryToast] = useState(null); // { key, text }
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const sendingRef = useRef(false);
+  const summaryInFlightRef = useRef(new Set()); // 章を生成中の会話ID
   const chatAreaRef = useRef(null);
   const fileRef = useRef(null);
   const longPressRef = useRef(null);
@@ -2288,6 +2422,7 @@ function NagiChat() {
     if (sp) setUserProfile(sp);
     const spm = sGet(SK.pendingMemories);
     if (Array.isArray(spm)) setPendingMemories(spm);
+    if (convosToLoad?.length > 0) convosToLoad = convosToLoad.map(migrateSummary);
     if (convosToLoad?.length > 0) {
       setConversations(convosToLoad);
       const nc = convosToLoad.filter(c => c.charId==="nagi");
@@ -2657,27 +2792,29 @@ function NagiChat() {
     return "fallback";
   }
 
-  // ── 要約生成（共通ヘルパー）──
-  const ROLLING_KEEP_TURNS = 25;
-
-  async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens) {
+  // ── 要約生成（共通ヘルパー）── { text, usage } を返す（失敗時 text:""）
+  async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens, model) {
+    model = model || "claude-haiku-4-5-20251001";
+    const reqBody = {
+      model,
+      max_tokens: maxTokens || 1024,
+      system: systemInstruction,
+      messages: [{ role:"user", content: transcript }],
+    };
+    // Haiku 5.5はthinkingが既定でON（max_tokensを食う）。要約には不要なので切る（effort既定mediumなのでdisabled可）
+    if (model === "claude-haiku-5-5") reqBody.thinking = { type:"disabled" };
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: maxTokens || 1024,
-        system: systemInstruction,
-        messages: [{ role:"user", content: transcript }],
-      }),
+      body: JSON.stringify(reqBody),
     });
-    if (!res.ok) { console.warn("[HAIKU] Failed:", res.status); return ""; }
+    if (!res.ok) { console.warn("[HAIKU] Failed:", res.status); return { text:"", usage:null }; }
     const data = await res.json();
     const textBlock = (data.content || []).find(b => b.type === "text");
-    return textBlock?.text || "";
+    return { text: textBlock?.text || "", usage: data.usage || null };
   }
 
-  // ── ローリング要約（スレ内圧縮）──
+  // ── ローリング要約の1章分を生成（スレ内圧縮）── { text, usage }
   async function generateSummary(oldMessages, apiKey) {
     let transcript = "";
     for (const m of oldMessages) {
@@ -2686,11 +2823,11 @@ function NagiChat() {
       const text = filePrefix + (m.content || "");
       if (text) transcript += name + ": " + text + "\n";
     }
-    if (!transcript.trim()) return "";
+    if (!transcript.trim()) return { text:"", usage:null };
     return callHaikuSummary(
       "以下の会話履歴を要約してください:\n\n" + transcript,
       "これは恋愛ロールプレイ会話の履歴です。キャラの口調・関係性・重要な出来事・感情の流れを失わないよう、簡潔に日本語で要約してください。箇条書きでなく地の文で。",
-      apiKey, 1024
+      apiKey, 1024, SUMMARY_MODEL
     );
   }
 
@@ -2710,11 +2847,12 @@ function NagiChat() {
     if (!transcript.trim()) return "";
     const systemInstruction = charType === "plain" ? MEMORY_SYSTEM_PLAIN : MEMORY_SYSTEM_LOVER;
     console.log("[MEMORY] Generating inherited memory (" + charType + ") from " + sourceConvs.length + " thread(s)...");
-    return callHaikuSummary(
+    const { text } = await callHaikuSummary(
       "以下の会話を記憶として書き留めてください:\n\n" + transcript,
       systemInstruction,
       apiKey, 1500
     );
+    return text;
   }
 
   // ── thinking剥がしヘルパー ──
@@ -2964,6 +3102,32 @@ function NagiChat() {
     await sendFlow(allMsgsForSend, [userMsg]);
   }
 
+  // ── ローリング要約：章の追記（返信完了後に非同期で実行。失敗してもリトライせず次の機会に）──
+  async function maybeAppendSummaryChunk(convId, msgs, chunks) {
+    const plan = planNextSummaryChunk(msgs, chunks);
+    if (!plan || !settings.apiKey || summaryInFlightRef.current.has(convId)) return;
+    summaryInFlightRef.current.add(convId);
+    try {
+      console.log("[SUMMARY] Generating chunk " + (chunks.length + 1) + " for msgs " + plan.from + ".." + (plan.to - 1));
+      const { text, usage } = await generateSummary(msgs.slice(plan.from, plan.to), settings.apiKey);
+      setConversations(prev => prev.map(c => {
+        if (c.id !== convId) return c;
+        const withUsage = usage ? { ...c, summaryUsage: addSummaryUsage(c.summaryUsage, SUMMARY_MODEL, usage) } : c;
+        const cur = getSummaryChunks(withUsage);
+        const lastUpTo = cur.length > 0 ? cur[cur.length - 1].upToIdx : 0;
+        // 生成中に別の章が付いた・履歴が編集で短くなった場合は捨てる（章は追記のみ・既存章は不変）
+        if (!text || lastUpTo !== plan.from || (withUsage.messages || []).length <= plan.to) return withUsage;
+        const { summary, ...rest } = withUsage;
+        return { ...rest, summaryChunks: [...cur, { text, upToIdx: plan.to, createdAt: Date.now() }], summaryUpTo: plan.to };
+      }));
+      console.log("[SUMMARY] " + (text ? "Chunk appended (up to index " + plan.to + ")" : "Chunk generation failed; will retry next time"));
+    } catch (e) {
+      console.warn("[SUMMARY] Chunk generation error; will retry next time", e);
+    } finally {
+      summaryInFlightRef.current.delete(convId);
+    }
+  }
+
   // ── 送信フロー本体（handleSend / handleRegenerate 共通）──
   async function sendFlow(allMsgs, appendMsgs) {
     if (sendingRef.current) return; // 連打による多重送信防止（loading state反映前の同期ガード）
@@ -2971,69 +3135,44 @@ function NagiChat() {
     appendMsgs = appendMsgs || [];
     setLoading(true);
     try {
-      // ── 【B】ローリング要約 ──
+      // ── 【B】ローリング要約（ラチェット式）──
+      // 送信時は保存済みの章をそのまま使うだけ（ここでは生成しない＝応答開始を待たせない）。
+      // 章の生成は返信完了後にmaybeAppendSummaryChunkがバックグラウンドで行う。
       let turnCount = 0;
       for (const m of allMsgs) { if (m.role === "user") turnCount++; }
-      const hasApiContent = allMsgs.filter(m => m.role === "assistant" && m.apiContent).length;
-      console.log("[DEBUG] turnCount=" + turnCount + ", totalMsgs=" + allMsgs.length + ", msgsWithApiContent=" + hasApiContent + ", threshold=" + ROLLING_KEEP_TURNS);
-
-      let summaryText = "";
-      let recentMsgs = allMsgs;
       const currentConv = conversations.find(c => c.id === activeConvId);
+      const summaryChunks = usableSummaryChunks(currentConv, allMsgs.length);
+      const splitIdx = summaryChunks.length > 0 ? summaryChunks[summaryChunks.length - 1].upToIdx : 0;
+      const summaryText = summaryChunks.map(c => c.text).join("\n\n");
+      const recentMsgs = allMsgs.slice(splitIdx);
+      console.log("[SUMMARY] turnCount=" + turnCount + ", totalMsgs=" + allMsgs.length + ", chunks=" + summaryChunks.length + ", split=" + splitIdx + ", keep=" + ROLLING_KEEP_TURNS + " turns");
 
-      if (turnCount > ROLLING_KEEP_TURNS) {
-        // 直近N個のuserメッセージの位置を見つけて、そこから保持
-        // 理想の分割位置を計算（直近8ターン分のuserから保持）
-        let idealKeepFrom = allMsgs.length;
-        let userCount = 0;
-        for (let i = allMsgs.length - 1; i >= 0; i--) {
-          if (allMsgs[i].role === "user") {
-            userCount++;
-            if (userCount >= ROLLING_KEEP_TURNS) { idealKeepFrom = i; break; }
-          }
-        }
-
-        const cachedSummaryIdx = currentConv?.summaryUpTo || 0;
-        const newUnsummarized = idealKeepFrom - cachedSummaryIdx;
-        const REGEN_THRESHOLD = 8; // 8メッセージ（≈4ターン）溜まったら再要約
-
-        if (currentConv?.summary && newUnsummarized < REGEN_THRESHOLD) {
-          // ── キャッシュ使い回し ──
-          // 要約テキストもsplit位置も固定 → system・メッセージ配列の先頭が安定 → キャッシュヒット
-          summaryText = currentConv.summary;
-          recentMsgs = allMsgs.slice(cachedSummaryIdx);
-          console.log("[SUMMARY] Reusing cached summary + fixed split at " + cachedSummaryIdx + " (unsummarized=" + newUnsummarized + ")");
-        } else {
-          // ── 初回 or 閾値超え → 再要約 ──
-          const oldMsgs = allMsgs.slice(0, idealKeepFrom);
-          recentMsgs = allMsgs.slice(idealKeepFrom);
-          if (oldMsgs.length > 0) {
-            console.log("[SUMMARY] Generating summary for " + oldMsgs.length + " msgs (unsummarized=" + newUnsummarized + ")");
-            const newSummary = await generateSummary(oldMsgs, settings.apiKey);
-            if (newSummary) {
-              summaryText = newSummary;
-              updateConv(c => ({ ...c, summary: newSummary, summaryUpTo: idealKeepFrom }));
-              console.log("[SUMMARY] Cached new summary (up to index " + idealKeepFrom + ")");
-            } else if (currentConv?.summary) {
-              summaryText = currentConv.summary;
-              recentMsgs = allMsgs.slice(cachedSummaryIdx);
-              console.warn("[SUMMARY] Generation failed, falling back to stale cache");
-            }
-          }
-        }
-      }
+      // 分割位置が変わると、systemブロック2と履歴の先頭が変わる。その前に生成されたthinkingを送り返すと
+      // preserved thinkingの履歴改変チェックで400になり得るので、生成時の分割位置が今と違うメッセージはthinkingを外す。
+      // （判定は毎回同じ結果になる＝次の章追加まで送信内容は不変）
+      const allChunks = getSummaryChunks(currentConv);
+      const producedUnderOtherSplit = m => splitWhenProduced(m, allChunks) !== splitIdx;
+      let thinkingStrippedForSplit = 0;
 
       // ── 【A】apiMsgs構築 + thinking剥がし ──
       // tsOnが付いたユーザーメッセージは、保存済みtimestampから送信時刻を本文末尾に合成（設定OFF後も剥がさない）
       const withTs = (m, apiMsg) => (m.role === "user" && m.tsOn === true && m.timestamp) ? appendTimestampToApiMsg(apiMsg, m.timestamp) : apiMsg;
       const apiMsgs = recentMsgs.flatMap((m, idx) => {
         if (m.role === "assistant" && m.apiMessages) {
-          // tool_use（画像生成）ターン: 複数APIメッセージに展開、構造は常に温存
+          // tool_use（画像生成）ターン: 複数APIメッセージに展開、構造は常に温存（分割位置が変わった後はthinkingだけ外す）
+          if (producedUnderOtherSplit(m)) {
+            thinkingStrippedForSplit++;
+            return m.apiMessages.map(am => am.role === "assistant" ? { ...am, content: stripAllThinking(am.content, "…") } : am);
+          }
           return m.apiMessages;
         }
         if (m.role === "assistant" && m.apiContent) {
           if (shouldPreserveApiContent(m, idx, recentMsgs)) {
-            // 温存: Web検索・画像・最新ターン
+            // 温存: Web検索・画像ターン（分割位置が変わった後はthinkingだけ外す）
+            if (producedUnderOtherSplit(m)) {
+              thinkingStrippedForSplit++;
+              return { role: "assistant", content: stripAllThinking(m.apiContent, m.content) };
+            }
             return { role: "assistant", content: m.apiContent };
           } else {
             // thinkingを剥がす
@@ -3061,6 +3200,7 @@ function NagiChat() {
         }
         return withTs(m, { role:m.role, content:m.content || "…" });
       }).map(stripCacheControl);
+      if (thinkingStrippedForSplit > 0) console.log("[SUMMARY] stripped thinking from " + thinkingStrippedForSplit + " preserved turn(s) produced under an older split");
 
       // ── 【ロアブック】一致したエントリを最後のユーザーメッセージ末尾に使い捨てで付加 ──
       // cache_controlの位置(apiMsgs[len-2])より後ろなので、キャッシュ構造には触れない。
@@ -3175,6 +3315,7 @@ function NagiChat() {
 
       // ── tool_use（generate_image）継続フロー ──
       let apiMessagesForStorage = null;
+      let lastRequestUsage = result.usage; // コンテキストサイズ表示用（最後のリクエストの入力量）
       if (imageGenActive && result.stopReason === "tool_use") {
         const toolBlock = result.fullContent.find(b => b.type === "tool_use" && b.name === "generate_image");
         if (toolBlock) {
@@ -3226,6 +3367,7 @@ function NagiChat() {
             throw err;
           }
           const result2 = await consumeAnthropicStream(res2, aTs, settings.model);
+          lastRequestUsage = result2.usage;
 
           apiMessagesForStorage = [assistantToolUseMsg, toolResultMsg, { role:"assistant", content:result2.fullContent }];
           const u1 = result.usage || {}, u2 = result2.usage || {};
@@ -3279,11 +3421,15 @@ function NagiChat() {
           ...(usage.cache_creation ? { cacheCreate5m:usage.cache_creation.ephemeral_5m_input_tokens||0, cacheCreate1h:usage.cache_creation.ephemeral_1h_input_tokens||0 } : {}),
           raw:result.usageRaw || JSON.stringify(usage) },
         cacheTtl,
+        splitIdx, // 生成時の分割位置（章追加後にthinkingを外すかの判定用）
+        contextTokens: (lastRequestUsage?.input_tokens||0) + (lastRequestUsage?.cache_read_input_tokens||0) + (lastRequestUsage?.cache_creation_input_tokens||0),
         ...(apiMessagesForStorage ? { apiMessages:apiMessagesForStorage } : { apiContent:result.fullContent }),
         ...(result.generatedImages ? { generatedImages:result.generatedImages } : {}),
         ...(memoryProposal ? { memoryProposal } : {}),
       };
       updateConv(c => ({...c, messages:c.messages.map(m => m.timestamp === aTs ? finalMsg : m)}));
+      // 返信完了後、必要なら次の章をバックグラウンドで作る（awaitしない）
+      maybeAppendSummaryChunk(activeConvId, [...allMsgs, finalMsg], getSummaryChunks(currentConv));
     } catch(err) {
       const errorType = classifyError(err);
       const charMsg = getCharErrorMessage(activeCharId, errorType, err.message, err._status);
@@ -3489,7 +3635,7 @@ function NagiChat() {
       // 状態を再読み込み
       if (data[SK.settings]) setSettings(prev => ({ ...prev, ...data[SK.settings] }));
       if (data[SK.convos]) {
-        setConversations(data[SK.convos]);
+        setConversations(data[SK.convos].map(migrateSummary));
         const first = data[SK.convos][0];
         if (first) { setActiveConvId(first.id); setActiveCharId(first.charId || "nagi"); }
       }
@@ -3545,6 +3691,7 @@ function NagiChat() {
         </div>
       )}
       {showProfileEditor && <PromptEditor prompt={userProfile} charName="共通プロフィール" charIcon="👤" onSave={p => { setUserProfile(p); setShowProfileEditor(false); }} onClose={() => setShowProfileEditor(false)} theme={theme} />}
+      {showThreadInfo && activeConv && <ThreadInfoModal conv={activeConv} theme={theme} onClose={() => setShowThreadInfo(false)} />}
       {showPendingBox && <PendingMemoryModal items={pendingMemories} characters={characters} theme={theme} onSave={savePendingMemory} onDelete={deletePendingMemory} onClose={() => setShowPendingBox(false)} />}
       {deleteConfirmId && <DeleteConfirmDialog onConfirm={confirmDelete} onCancel={() => setDeleteConfirmId(null)} theme={theme} />}
 
@@ -3621,7 +3768,18 @@ function NagiChat() {
               <span style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent,whiteSpace:"nowrap" }}>{activeChar.name}</span>
             </div>
             {activeRoom && <div style={{ fontSize:"10px",color:theme.accentLight,fontFamily:FONT,opacity:0.8,marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"150px" }}>{activeRoom.name}</div>}
-            <StatusBadges model={settings.model} effort={settings.effort} thinkingEnabled={settings.thinkingEnabled} webSearch={settings.webSearch} />
+            <div style={{ display:"flex",alignItems:"center",gap:"4px",flexWrap:"wrap" }}>
+              <StatusBadges model={settings.model} effort={settings.effort} thinkingEnabled={settings.thinkingEnabled} webSearch={settings.webSearch} />
+              {(() => {
+                const st = computeConvStats(activeConv);
+                if (!st.total && st.contextTokens == null) return null;
+                return (
+                  <span onClick={() => setShowThreadInfo(true)} title="このスレのコスト・コンテキスト" style={{ display:"inline-flex",alignItems:"center",gap:"3px",padding:"2px 8px",borderRadius:"8px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",fontSize:"9px",color:"#a1a1aa",fontWeight:600,fontFamily:FONT,cursor:"pointer",whiteSpace:"nowrap" }}>
+                    ${st.total.toFixed(2)}{st.contextTokens != null && <span style={{ opacity:0.7 }}>· {formatTokens(st.contextTokens)}</span>}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
         </div>
         <div style={{ display:"flex",gap:"5px",flexShrink:0 }}>
