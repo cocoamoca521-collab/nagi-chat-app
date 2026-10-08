@@ -1687,6 +1687,7 @@ function PendingMemoryModal({ items, characters, rooms, theme, onSave, onDelete,
   const t = theme || THEMES.nagi;
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState("");
+  const [confirmItem, setConfirmItem] = useState(null);
   const sorted = [...items].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   const smallBtn = { padding:"7px 12px",borderRadius:"12px",fontSize:"11.5px",fontFamily:FONT,cursor:"pointer",transition:"all 0.2s",fontWeight:600 };
   return (
@@ -1737,7 +1738,7 @@ function PendingMemoryModal({ items, characters, rooms, theme, onSave, onDelete,
                     </>
                   ) : (
                     <>
-                      <button onClick={() => onDelete(item)} style={{ ...smallBtn, border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontWeight:500 }}>削除</button>
+                      <button onClick={() => setConfirmItem(item)} style={{ ...smallBtn, border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontWeight:500 }}>削除</button>
                       <button onClick={() => { setEditingId(item.id); setDraft(item.text); }} style={{ ...smallBtn, border:`1px solid ${ct.accent}55`,background:`${ct.accent}14`,color:ct.accentLight }}>編集して保存</button>
                       <button onClick={() => onSave(item, item.text)} style={{ ...smallBtn, border:"none",background:ct.userGradient,color:"#fff",boxShadow:`0 2px 10px ${ct.userShadow}` }}>保存</button>
                     </>
@@ -1748,6 +1749,8 @@ function PendingMemoryModal({ items, characters, rooms, theme, onSave, onDelete,
           })}
         </div>
       </div>
+      {confirmItem && <DeleteConfirmDialog theme={t} message={`「${snip(confirmItem.text)}」の申請を消すよ。元に戻せないよ`}
+        onCancel={() => setConfirmItem(null)} onConfirm={() => { onDelete(confirmItem); setConfirmItem(null); }} />}
     </div>
   );
 }
@@ -1808,6 +1811,7 @@ function CharSwitcher({ chars, activeId, onSwitch, theme, onBackLongPressStart, 
 }
 
 // ═══ Delete Confirm Dialog ═══
+const snip = s => (s || "").length > 20 ? s.slice(0, 20) + "…" : (s || "");
 function DeleteConfirmDialog({ onConfirm, onCancel, theme, message }) {
   const t = theme || THEMES.nagi;
   return (
@@ -2116,6 +2120,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
   const [mems, setMems] = useState(Array.isArray(memories) ? memories : []);
   const [editingMemId, setEditingMemId] = useState(null);
   const [memDraft, setMemDraft] = useState("");
+  const [confirmDel, setConfirmDel] = useState(null); // null | {type:"mem", bucket, id, text} | {type:"lore", id, text}
   const hasRooms = Array.isArray(rooms); // 部屋を持つキャラ（プレーンさん）の編集時だけ渡される
   const [mScope, setMScope] = useState(memoryScope === "room" ? "room" : "char");
   const [roomMems, setRoomMems] = useState(normalizeRoomMemories(roomMemories));
@@ -2171,7 +2176,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                       onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
                       <PenIcon color={`${ac}66`} size={15} />
                     </button>
-                    <button onClick={ev => { ev.stopPropagation(); setLore(prev => prev.filter(x => x.id !== e.id)); }} title="削除" style={iconBtnStyle}
+                    <button onClick={ev => { ev.stopPropagation(); setConfirmDel({ type:"lore", id: e.id, text: e.title || (e.keywords || []).join("、") }); }} title="削除" style={iconBtnStyle}
                       onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
                       <XIcon color={`${ac}66`} size={15} />
                     </button>
@@ -2261,7 +2266,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                       <div style={{ display:"flex",alignItems:"center",gap:"8px",marginTop:"4px",flexWrap:"wrap" }}>
                         {m.createdAt && <span style={{ fontSize:"9.5px",color:"#52525b",fontFamily:FONT }}>{fDate(m.createdAt)}</span>}
                         {hasRooms && mScope === "room" && (
-                          <select value="" title="移動" onChange={e => { const to = e.target.value; if (to === "__") return; moveMem(m, bucket, to); }}
+                          <select value="__" title="移動" onChange={e => { const to = e.target.value; if (to === "__") return; moveMem(m, bucket, to); }}
                             style={{ fontSize:"10px",padding:"2px 6px",borderRadius:"8px",border:`1px solid ${ac}30`,background:"#1a1a22",color:acl,fontFamily:FONT,cursor:"pointer",outline:"none",maxWidth:"150px" }}>
                             <option value="__">↪ 移動…</option>
                             {moveTargets.filter(o => o.key !== bucket).map(o => <option key={o.key || "common"} value={o.key}>{o.key ? "部屋：" + o.label : "共通"}</option>)}
@@ -2273,7 +2278,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                       onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
                       <PenIcon color={`${ac}66`} size={14} />
                     </button>
-                    <button onClick={() => updateBucket(bucket, arr => arr.filter(x => x.id !== m.id))} title="削除" style={iconBtnStyle}
+                    <button onClick={() => setConfirmDel({ type:"mem", bucket, id: m.id, text: m.text })} title="削除" style={iconBtnStyle}
                       onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
                       <XIcon color={`${ac}66`} size={14} />
                     </button>
@@ -2315,6 +2320,17 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
       <LoreEntryModal entry={editingLore === "new" ? null : editingLore} theme={t}
         onSave={entry => { setLore(prev => editingLore === "new" ? [...prev, entry] : prev.map(x => x.id === entry.id ? entry : x)); setEditingLore(null); }}
         onClose={() => setEditingLore(null)} />
+    )}
+    {confirmDel && (
+      <DeleteConfirmDialog theme={t}
+        message={confirmDel.type === "lore" ? `エントリ「${snip(confirmDel.text)}」を消すよ。元に戻せないよ` : `「${snip(confirmDel.text)}」を消すよ。元に戻せないよ`}
+        onCancel={() => setConfirmDel(null)}
+        onConfirm={() => {
+          const d = confirmDel;
+          if (d.type === "lore") setLore(prev => prev.filter(x => x.id !== d.id));
+          else updateBucket(d.bucket, arr => arr.filter(x => x.id !== d.id));
+          setConfirmDel(null);
+        }} />
     )}
     </>
   );
