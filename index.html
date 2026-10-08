@@ -250,8 +250,8 @@ function computeConvStats(conv) {
     total += mc.cost;
     if (mc.unknown) unknown = true;
   }
-  for (const [model, u] of Object.entries(conv?.summaryUsage || {})) {
-    const c = calcMessageCost({ usage: u }, model);
+  for (const e of Array.isArray(conv?.summaryUsage) ? conv.summaryUsage : []) {
+    const c = summaryUsageCost(e);
     total += c.cost;
     if (c.unknown) unknown = true;
   }
@@ -277,6 +277,13 @@ function computeMonthlyUsage(conversations) {
       const mc = messageCostOf(m);
       if (!mc) continue;
       const { cost, unknown, modelId } = mc;
+      total += cost;
+      if (!byModel[modelId]) byModel[modelId] = { cost: 0, unknown };
+      byModel[modelId].cost += cost;
+    }
+    for (const e of Array.isArray(conv.summaryUsage) ? conv.summaryUsage : []) {
+      if (!e.at || e.at < monthStart) continue;
+      const { cost, unknown, modelId } = summaryUsageCost(e);
       total += cost;
       if (!byModel[modelId]) byModel[modelId] = { cost: 0, unknown };
       byModel[modelId].cost += cost;
@@ -637,6 +644,7 @@ function withoutProposal(m) {
 const ROLLING_KEEP_TURNS = 80;
 const SUMMARY_CHUNK_TURNS = 20;
 const SUMMARY_MODEL = "claude-haiku-5-5";
+const MEMORY_INHERIT_MODEL = "claude-haiku-4-5-20251001"; // スレ間の記憶引き継ぎ（従来どおり）
 
 // 会話の章リスト。旧形式（conv.summary / summaryUpTo）は第1章として読む
 function getSummaryChunks(conv) {
@@ -682,13 +690,18 @@ function stripAllThinking(content, fallbackText) {
   const stripped = content.filter(b => b?.type !== "thinking" && b?.type !== "redacted_thinking");
   return stripped.length > 0 ? stripped : (fallbackText || "…");
 }
-// 要約APIのusageを会話に累積（モデル別。スレ累計コストに含める）
-function addSummaryUsage(prev, model, u) {
-  const cur = (prev || {})[model] || { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
-  return { ...(prev || {}), [model]: {
-    input: cur.input + (u.input_tokens || 0), output: cur.output + (u.output_tokens || 0),
-    cacheRead: cur.cacheRead + (u.cache_read_input_tokens || 0), cacheCreate: cur.cacheCreate + (u.cache_creation_input_tokens || 0),
-  } };
+// 裏方Haiku（あらすじ要約・記憶引き継ぎ）のusageを1呼び出し1件で会話に記録する。
+// 日時を持たせて、スレ累計（全件）と月間集計（今月分）の両方に使う
+function addSummaryUsage(prev, model, u, kind) {
+  return [...(Array.isArray(prev) ? prev : []), {
+    at: Date.now(), model, kind: kind || "summary",
+    input: u.input_tokens || 0, output: u.output_tokens || 0,
+    cacheRead: u.cache_read_input_tokens || 0, cacheCreate: u.cache_creation_input_tokens || 0,
+  }];
+}
+// 記録1件の概算コスト
+function summaryUsageCost(e) {
+  return { ...calcMessageCost({ usage: e, timestamp: e.at }, e.model), modelId: e.model };
 }
 
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
@@ -905,7 +918,7 @@ function TopPage({ characters, onSelect, conversations }) {
                 <div key={id}>{id.replace("claude-","")}{v.unknown ? "(?)" : ""}: ${v.cost.toFixed(2)}</div>
               ))}
               <div style={{ marginTop:"8px",fontSize:"8px",color:"#3a3a42",maxWidth:"240px",marginLeft:"auto",lineHeight:"1.6" }}>
-                ※アプリ経由の概算。要約用Haiku・失敗リクエスト・画像生成(OpenAI)は含みません
+                ※アプリ経由の概算（あらすじ要約・記憶引き継ぎのHaikuを含む）。失敗リクエスト・画像生成(OpenAI)は含みません
               </div>
             </div>
           )}
@@ -2316,7 +2329,7 @@ function ThreadInfoModal({ conv, theme, onClose }) {
           </button>
         </div>
         <div style={{ display:"flex",flexDirection:"column",gap:"8px" }}>
-          {row("累計コスト（概算）", "$" + st.total.toFixed(st.total < 1 ? 3 : 2) + (st.unknown ? "(?)" : ""), "会話＋あらすじ要約の合計")}
+          {row("累計コスト（概算）", "$" + st.total.toFixed(st.total < 1 ? 3 : 2) + (st.unknown ? "(?)" : ""), "会話＋あらすじ要約・記憶引き継ぎの合計")}
           {row("現在のコンテキスト", st.contextTokens == null ? "—" : st.contextTokens.toLocaleString() + " tok", "直前の送信で実際に入力された量")}
           {st.chunkCount > 0 && row("あらすじ", st.chunkCount + "章", "直近" + ROLLING_KEEP_TURNS + "ターンより前を要約済み")}
         </div>
@@ -2578,7 +2591,11 @@ function NagiChat() {
 
     // ── 通常: 直近スレを要約して引き継ぐ ──
     const charType = activeChar.charType || (activeCharId === "plain" ? "plain" : "lover");
-    const memory = await generateInheritedMemory([mostRecent], charType, settings.apiKey);
+    const { text: memory, usage: memoryUsage } = await generateInheritedMemory([mostRecent], charType, settings.apiKey);
+    if (memoryUsage) {
+      // 引き継ぎHaikuのコストは新しいスレに記録（スレ累計・月間集計に入る）
+      setConversations(prev => prev.map(c => c.id === newId ? { ...c, summaryUsage: addSummaryUsage(c.summaryUsage, MEMORY_INHERIT_MODEL, memoryUsage, "memory") } : c));
+    }
     if (memory) {
       setConversations(prev => prev.map(c => c.id === newId ? { ...c, inheritedMemory: memory } : c));
       console.log("[MEMORY] Inherited memory saved to new thread:", memory.slice(0, 100) + "...");
@@ -2794,7 +2811,7 @@ function NagiChat() {
 
   // ── 要約生成（共通ヘルパー）── { text, usage } を返す（失敗時 text:""）
   async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens, model) {
-    model = model || "claude-haiku-4-5-20251001";
+    model = model || MEMORY_INHERIT_MODEL;
     const reqBody = {
       model,
       max_tokens: maxTokens || 1024,
@@ -2844,15 +2861,14 @@ function NagiChat() {
         if (text) transcript += name + ": " + text + "\n";
       }
     }
-    if (!transcript.trim()) return "";
+    if (!transcript.trim()) return { text:"", usage:null };
     const systemInstruction = charType === "plain" ? MEMORY_SYSTEM_PLAIN : MEMORY_SYSTEM_LOVER;
     console.log("[MEMORY] Generating inherited memory (" + charType + ") from " + sourceConvs.length + " thread(s)...");
-    const { text } = await callHaikuSummary(
+    return callHaikuSummary(
       "以下の会話を記憶として書き留めてください:\n\n" + transcript,
       systemInstruction,
-      apiKey, 1500
+      apiKey, 1500, MEMORY_INHERIT_MODEL
     );
-    return text;
   }
 
   // ── thinking剥がしヘルパー ──
