@@ -382,7 +382,10 @@ const THEMES = {
     glassHighlight: "rgba(221,214,254,0.42)",
     glassShadow: "0 4px 20px rgba(0,0,0,0.25)",
     userGlassGradient: "linear-gradient(135deg, rgba(124,58,237,0.82), rgba(167,139,250,0.82))",
-    flatPanelBg: "rgba(20,16,32,0.45)",
+    // フラットモード：AIメッセージごとの全幅ガラス（中央濃く・縁薄く）
+    flatGlassBg: "linear-gradient(180deg, rgba(42,35,62,0.48), rgba(34,28,52,0.62) 30%, rgba(34,28,52,0.62) 70%, rgba(26,21,42,0.46))",
+    flatGlassHighlight: "rgba(221,214,254,0.50)",
+    flatGlassShadow: "0 10px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4), 0 0 24px rgba(167,139,250,0.10)",
     textBody: "#eae6f5",
     textMuted: "#8b85a0",
     textFaint: "#5d586e",
@@ -412,7 +415,10 @@ const THEMES = {
     glassHighlight: "rgba(251,207,232,0.42)",
     glassShadow: "0 4px 20px rgba(0,0,0,0.25)",
     userGlassGradient: "linear-gradient(135deg, rgba(236,72,153,0.82), rgba(244,114,182,0.82))",
-    flatPanelBg: "rgba(32,14,24,0.45)",
+    // フラットモード：AIメッセージごとの全幅ガラス（中央濃く・縁薄く）
+    flatGlassBg: "linear-gradient(180deg, rgba(62,35,48,0.48), rgba(52,28,40,0.62) 30%, rgba(52,28,40,0.62) 70%, rgba(42,21,32,0.46))",
+    flatGlassHighlight: "rgba(251,207,232,0.50)",
+    flatGlassShadow: "0 10px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4), 0 0 24px rgba(244,114,182,0.10)",
     textBody: "#f5e9ee",
     textMuted: "#a08893",
     textFaint: "#6b5861",
@@ -442,7 +448,10 @@ const THEMES = {
     glassHighlight: "rgba(254,215,170,0.42)",
     glassShadow: "0 4px 20px rgba(0,0,0,0.25)",
     userGlassGradient: "linear-gradient(135deg, rgba(249,115,22,0.82), rgba(251,146,60,0.82))",
-    flatPanelBg: "rgba(30,22,14,0.45)",
+    // フラットモード：AIメッセージごとの全幅ガラス（中央濃く・縁薄く）
+    flatGlassBg: "linear-gradient(180deg, rgba(60,45,33,0.48), rgba(50,37,27,0.62) 30%, rgba(50,37,27,0.62) 70%, rgba(40,29,20,0.46))",
+    flatGlassHighlight: "rgba(254,215,170,0.50)",
+    flatGlassShadow: "0 10px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4), 0 0 24px rgba(251,146,60,0.10)",
     textBody: "#f3ede4",
     textMuted: "#9d9284",
     textFaint: "#675e52",
@@ -1510,7 +1519,7 @@ async function saveGeneratedImage(img) {
   } catch (e) { console.error("[IMAGE SAVE]", e); }
 }
 
-function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled, layoutMode }) {
+function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled, layoutMode, continuesToAssistant }) {
   const isUser = msg.role === "user";
   const t = theme || THEMES.nagi;
   const isFlat = !isUser && layoutMode === "flat";
@@ -1530,7 +1539,14 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
     setTimeout(() => setCopied(false), 1200);
   };
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: "18px", animation: "fadeIn 0.25s ease-out" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: "18px", animation: "fadeIn 0.25s ease-out",
+      // フラットモード：AIメッセージ1件ごとの全幅すりガラス。連続するAIメッセージは余白を詰めて読み物の続きに見せる
+      ...(isFlat ? {
+        width: "100%", boxSizing: "border-box", padding: "16px 18px 12px",
+        background: t.flatGlassBg, ...glassBlur(14), borderRadius: "14px",
+        border: `1px solid ${t.glassBorder}`, borderTopColor: t.flatGlassHighlight,
+        boxShadow: t.flatGlassShadow, marginBottom: continuesToAssistant ? "8px" : "18px",
+      } : {}) }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px", flexDirection: isUser ? "row-reverse" : "row", paddingLeft: isUser ? 0 : "4px", paddingRight: isUser ? "4px" : 0 }}>
         {!isUser && charAvatar && <Avatar src={charAvatar} size={28} border={`2px solid ${t.accent}40`} />}
         <span style={{ fontSize: "11px", color: t.textMuted, fontFamily: FONT, fontWeight: 500 }}>
@@ -1557,7 +1573,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
       ) : (
         <GeneratedImagesBlock images={msg.generatedImages} theme={t} onExpand={setExpandedImg} />
       )}
-      {expandedImg && (
+      {expandedImg && ReactDOM.createPortal(
         <div onClick={() => setExpandedImg(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, animation:"fadeIn 0.15s ease-out" }}>
           <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", alignItems:"center", maxWidth:"92vw", maxHeight:"94vh" }}>
             <div style={{ position:"relative" }}>
@@ -1566,7 +1582,8 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
             </div>
             <ImagePromptPanel img={expandedImg} theme={t} open={showImgPrompt} onToggle={() => setShowImgPrompt(v => !v)} />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {msg.files?.length > 0 && (
         <div style={{ display:"flex", gap:"6px", flexWrap:"wrap", maxWidth:"82%", marginBottom:"4px" }}>
@@ -1583,7 +1600,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
           ))}
         </div>
       )}
-      {expandedFile && (
+      {expandedFile && ReactDOM.createPortal(
         <div style={overlayStyle} onClick={() => setExpandedFile(null)}>
           <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22", borderRadius:"20px", padding:"20px", width:"min(480px, 90vw)", maxHeight:"80vh", overflowY:"auto", border:`1px solid ${t.accent}20`, boxShadow:`0 20px 60px rgba(0,0,0,0.5)` }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"12px" }}>
@@ -1595,12 +1612,13 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
             </div>
             <div style={{ fontSize:"12px", color:"#d4d4d8", fontFamily:"monospace", whiteSpace:"pre-wrap", wordBreak:"break-word", lineHeight:"1.7" }}>{expandedFile.text}</div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {(msg.content || !(msg.generatedImages?.length > 0)) && (
         <div style={isFlat ? {
           width: "100%", maxWidth: "100%",
-          padding: "2px 4px 0",
+          padding: "2px 0 0",
           background: "none", border: "none", borderRadius: 0, boxShadow: "none",
           color: t.textBody, fontSize: "14.5px", lineHeight: "1.95",
           fontFamily: FONT, whiteSpace: "pre-wrap", wordBreak: "break-word",
@@ -1663,9 +1681,6 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
         <div title="この発言に添付されたロアブックのエントリ" style={{ marginTop:"3px", paddingRight:"12px", maxWidth:"82%", textAlign:"right", fontSize:"9px", color:`${t.accent}99`, fontFamily:FONT, wordBreak:"break-word" }}>
           📖 {msg.triggeredLore.join("・")}
         </div>
-      )}
-      {isFlat && (
-        <div style={{ height:"1px", width:"100%", background:`linear-gradient(90deg, transparent, ${t.accent}52, transparent)`, margin:"10px 0 4px" }} />
       )}
     </div>
   );
@@ -4005,12 +4020,6 @@ function NagiChat() {
             <div style={{ fontSize:"14px",color:"#52525b",lineHeight:"1.8",fontFamily:FONT }}>{activeChar.name}との会話を始めよう</div>
           </div>
         )}
-        {/* フラットモード：読書エリア全体に1枚のすりガラスパネルを敷く */}
-        <div style={settings.messageLayout === "flat" && (messages.length > 0 || loading) ? {
-          background: theme.flatPanelBg, ...glassBlur(16),
-          borderRadius: "16px", border: `1px solid ${theme.glassBorder}`, borderTopColor: theme.glassHighlight,
-          boxShadow: theme.glassShadow, padding: "18px 16px 6px",
-        } : undefined}>
         {(() => {
           const displayMsgs = messages.filter(m => !(m._streaming && !m.content));
           const lastMsg = displayMsgs[displayMsgs.length - 1];
@@ -4018,12 +4027,14 @@ function NagiChat() {
           return displayMsgs.map((msg, i) => {
             const prevMsg = displayMsgs[i - 1];
             const showDateSeparator = !prevMsg || !isSameDay(prevMsg.timestamp, msg.timestamp);
+            const nextMsg = displayMsgs[i + 1];
+            const continuesToAssistant = msg.role === "assistant" && !msg.memoryProposal && nextMsg?.role === "assistant" && isSameDay(msg.timestamp, nextMsg.timestamp);
             return (
               <React.Fragment key={msg.timestamp+"-"+i}>
                 {showDateSeparator && <DateSeparator timestamp={msg.timestamp} theme={theme} />}
                 <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
                   isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading}
-                  layoutMode={settings.messageLayout || "bubble"} />
+                  layoutMode={settings.messageLayout || "bubble"} continuesToAssistant={continuesToAssistant} />
                 {msg.memoryProposal && !msg._streaming && (
                   <MemoryProposalCard key={msg.memoryProposal.id} proposal={msg.memoryProposal} charName={msg.charName || activeChar.name} charAvatar={activeChar.avatar} theme={theme} layoutMode={settings.messageLayout || "bubble"}
                     onSave={text => handleProposalAction(activeConvId, msg, "save", text)}
@@ -4035,7 +4046,6 @@ function NagiChat() {
           });
         })()}
         {loading && !(messages.some(m => m._streaming && m.content)) && <TypingIndicator avatar={activeChar.avatar} name={activeChar.name} theme={theme} />}
-        </div>
         <div ref={endRef} />
       </div>
       {/* Scroll to bottom button */}
