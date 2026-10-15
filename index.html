@@ -382,10 +382,6 @@ const THEMES = {
     glassHighlight: "rgba(221,214,254,0.42)",
     glassShadow: "0 4px 20px rgba(0,0,0,0.25)",
     userGlassGradient: "linear-gradient(135deg, rgba(124,58,237,0.82), rgba(167,139,250,0.82))",
-    // フラットモード：AIメッセージごとの全幅ガラス（中央濃く・縁薄く）
-    flatGlassBg: "linear-gradient(180deg, rgba(42,35,62,0.48), rgba(34,28,52,0.62) 30%, rgba(34,28,52,0.62) 70%, rgba(26,21,42,0.46))",
-    flatGlassHighlight: "rgba(221,214,254,0.50)",
-    flatGlassShadow: "0 10px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4), 0 0 24px rgba(167,139,250,0.10)",
     textBody: "#eae6f5",
     textMuted: "#8b85a0",
     textFaint: "#5d586e",
@@ -415,10 +411,6 @@ const THEMES = {
     glassHighlight: "rgba(251,207,232,0.42)",
     glassShadow: "0 4px 20px rgba(0,0,0,0.25)",
     userGlassGradient: "linear-gradient(135deg, rgba(236,72,153,0.82), rgba(244,114,182,0.82))",
-    // フラットモード：AIメッセージごとの全幅ガラス（中央濃く・縁薄く）
-    flatGlassBg: "linear-gradient(180deg, rgba(62,35,48,0.48), rgba(52,28,40,0.62) 30%, rgba(52,28,40,0.62) 70%, rgba(42,21,32,0.46))",
-    flatGlassHighlight: "rgba(251,207,232,0.50)",
-    flatGlassShadow: "0 10px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4), 0 0 24px rgba(244,114,182,0.10)",
     textBody: "#f5e9ee",
     textMuted: "#a08893",
     textFaint: "#6b5861",
@@ -448,10 +440,6 @@ const THEMES = {
     glassHighlight: "rgba(254,215,170,0.42)",
     glassShadow: "0 4px 20px rgba(0,0,0,0.25)",
     userGlassGradient: "linear-gradient(135deg, rgba(249,115,22,0.82), rgba(251,146,60,0.82))",
-    // フラットモード：AIメッセージごとの全幅ガラス（中央濃く・縁薄く）
-    flatGlassBg: "linear-gradient(180deg, rgba(60,45,33,0.48), rgba(50,37,27,0.62) 30%, rgba(50,37,27,0.62) 70%, rgba(40,29,20,0.46))",
-    flatGlassHighlight: "rgba(254,215,170,0.50)",
-    flatGlassShadow: "0 10px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4), 0 0 24px rgba(251,146,60,0.10)",
     textBody: "#f3ede4",
     textMuted: "#9d9284",
     textFaint: "#675e52",
@@ -1519,7 +1507,7 @@ async function saveGeneratedImage(img) {
   } catch (e) { console.error("[IMAGE SAVE]", e); }
 }
 
-function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled, layoutMode, continuesToAssistant }) {
+function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRegenerate, regenerateDisabled, layoutMode, continuesToAssistant, continuesFromAssistant }) {
   const isUser = msg.role === "user";
   const t = theme || THEMES.nagi;
   const isFlat = !isUser && layoutMode === "flat";
@@ -1540,13 +1528,22 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: "18px", animation: "fadeIn 0.25s ease-out",
-      // フラットモード：AIメッセージ1件ごとの全幅すりガラス。連続するAIメッセージは余白を詰めて読み物の続きに見せる
+      // フラットモード：左端の縦アクセントライン＋blurなしの極薄ダーク敷き（背景パターンが透ける程度）
+      // 連続するAIメッセージは余白0・つなぎ目の角丸なしで、ラインと敷きが1本に繋がって見えるようにする
       ...(isFlat ? {
-        width: "100%", boxSizing: "border-box", padding: "16px 18px 12px",
-        background: t.flatGlassBg, ...glassBlur(14), borderRadius: "14px",
-        border: `1px solid ${t.glassBorder}`, borderTopColor: t.flatGlassHighlight,
-        boxShadow: t.flatGlassShadow, marginBottom: continuesToAssistant ? "8px" : "18px",
+        position: "relative", width: "100%", boxSizing: "border-box", padding: "10px 14px 10px 16px",
+        background: "linear-gradient(90deg, rgba(20,16,32,0.25), rgba(20,16,32,0.12))",
+        borderRadius: `0 ${continuesFromAssistant ? 0 : 12}px ${continuesToAssistant ? 0 : 12}px 0`,
+        marginBottom: continuesToAssistant ? 0 : "18px",
       } : {}) }}>
+      {isFlat && (
+        <div aria-hidden="true" style={{
+          position: "absolute", left: 0, top: 0, bottom: 0, width: "2.5px", pointerEvents: "none",
+          borderRadius: `${continuesFromAssistant ? 0 : 2}px ${continuesFromAssistant ? 0 : 2}px ${continuesToAssistant ? 0 : 2}px ${continuesToAssistant ? 0 : 2}px`,
+          // 上が明るく下に溶ける。連続時はつなぎ目を中間トーンで揃えて途切れないようにする
+          background: `linear-gradient(180deg, ${continuesFromAssistant ? t.accentLight + "66" : t.accentLight}, ${continuesToAssistant ? t.accentLight + "66" : "transparent"})`,
+        }} />
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px", flexDirection: isUser ? "row-reverse" : "row", paddingLeft: isUser ? 0 : "4px", paddingRight: isUser ? "4px" : 0 }}>
         {!isUser && charAvatar && <Avatar src={charAvatar} size={28} border={`2px solid ${t.accent}40`} />}
         <span style={{ fontSize: "11px", color: t.textMuted, fontFamily: FONT, fontWeight: 500 }}>
@@ -4029,12 +4026,13 @@ function NagiChat() {
             const showDateSeparator = !prevMsg || !isSameDay(prevMsg.timestamp, msg.timestamp);
             const nextMsg = displayMsgs[i + 1];
             const continuesToAssistant = msg.role === "assistant" && !msg.memoryProposal && nextMsg?.role === "assistant" && isSameDay(msg.timestamp, nextMsg.timestamp);
+            const continuesFromAssistant = msg.role === "assistant" && prevMsg?.role === "assistant" && !prevMsg.memoryProposal && !showDateSeparator;
             return (
               <React.Fragment key={msg.timestamp+"-"+i}>
                 {showDateSeparator && <DateSeparator timestamp={msg.timestamp} theme={theme} />}
                 <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
                   isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading}
-                  layoutMode={settings.messageLayout || "bubble"} continuesToAssistant={continuesToAssistant} />
+                  layoutMode={settings.messageLayout || "bubble"} continuesToAssistant={continuesToAssistant} continuesFromAssistant={continuesFromAssistant} />
                 {msg.memoryProposal && !msg._streaming && (
                   <MemoryProposalCard key={msg.memoryProposal.id} proposal={msg.memoryProposal} charName={msg.charName || activeChar.name} charAvatar={activeChar.avatar} theme={theme} layoutMode={settings.messageLayout || "bubble"}
                     onSave={text => handleProposalAction(activeConvId, msg, "save", text)}
