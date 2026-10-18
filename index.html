@@ -48,7 +48,7 @@ textarea::placeholder { color: #6b6580; }
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useLayoutEffect, useRef } = React;
 
 // ═══ Prompts ═══
 const NAGI_PROMPT = `あなたの名前はナギ。ユーザー（多恵子）の年下の恋人。
@@ -2582,6 +2582,31 @@ function NagiChat() {
   const iconBtnHover = e => { e.currentTarget.querySelector('svg').style.stroke = theme.accent; };
   const iconBtnLeave = e => { e.currentTarget.querySelector('svg').style.stroke = `${theme.accent}66`; };
 
+  // ヘッダーのキャラ名は、右のボタン群より上に余白があればヘッダー右端まで広げる
+  const headerRef = useRef(null);
+  const headerNameRef = useRef(null);
+  const headerBtnsRef = useRef(null);
+  const [headerNameMaxWidth, setHeaderNameMaxWidth] = useState(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current, name = headerNameRef.current, btns = headerBtnsRef.current;
+    if (!header || !name || !btns) return;
+    const measure = () => {
+      const h = header.getBoundingClientRect();
+      const n = name.getBoundingClientRect();
+      const b = btns.getBoundingClientRect();
+      const padRight = parseFloat(getComputedStyle(header).paddingRight) || 0;
+      const clearAboveBtns = b.top >= n.bottom;
+      const right = clearAboveBtns ? h.right - padRight : b.left - 8;
+      setHeaderNameMaxWidth(Math.max(0, Math.floor(right - n.left)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(header);
+    ro.observe(btns);
+    ro.observe(name.parentElement);
+    return () => ro.disconnect();
+  }, [screen, activeChar.name]);
+
   useEffect(() => {
     const sc = sGet(SK.convos), ss = sGet(SK.settings), sch = sGet(SK.chars), sp = sGet(SK.profile);
     let sr = sGet(SK.rooms);
@@ -3958,8 +3983,8 @@ function NagiChat() {
       })()}
 
       {/* Header */}
-      <div style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
-        <div style={{ display:"flex",alignItems:"center",gap:"12px",minWidth:0,flex:1,overflow:"hidden" }}>
+      <div ref={headerRef} style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
+        <div style={{ display:"flex",alignItems:"center",gap:"12px",minWidth:0,flex:1 }}>
           <button onClick={() => setSidebarOpen(true)} style={{ background:"none",border:"none",cursor:"pointer",padding:"3px",display:"flex",alignItems:"center",flexShrink:0 }}
             onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
             <HamburgerIcon color={`${theme.accent}66`} size={20} />
@@ -3967,7 +3992,7 @@ function NagiChat() {
           <div style={{ minWidth:0 }}>
             <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
               <CharSwitcher chars={characters} activeId={activeCharId} onSwitch={handleSwitchChar} theme={theme} onBackLongPressStart={startBackLongPress} onBackLongPressEnd={cancelBackLongPress} />
-              <span style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent,whiteSpace:"nowrap" }}>{activeChar.name}</span>
+              <span ref={headerNameRef} style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flexShrink:0,maxWidth:headerNameMaxWidth ?? undefined }}>{activeChar.name}</span>
             </div>
             {activeRoom && <div style={{ fontSize:"10px",color:theme.accentLight,fontFamily:FONT,opacity:0.8,marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"150px" }}>{activeRoom.name}</div>}
             <div style={{ display:"flex",alignItems:"center",gap:"4px",flexWrap:"wrap" }}>
@@ -3984,7 +4009,7 @@ function NagiChat() {
             </div>
           </div>
         </div>
-        <div style={{ display:"flex",gap:"5px",flexShrink:0 }}>
+        <div ref={headerBtnsRef} style={{ display:"flex",gap:"5px",flexShrink:0 }}>
           {pendingMemories.length > 0 && (
             <button onClick={() => setShowPendingBox(true)} style={{...headerBtnStyle, gap:"3px", padding:"7px 8px", background:`${theme.accent}14`, border:`1px solid ${theme.accent}35`, animation:"fadeIn 0.25s ease-out"}} title="保留中のメモリー">
               <span style={{ fontSize:"13px",lineHeight:1 }}>🔔</span>
