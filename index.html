@@ -3495,7 +3495,7 @@ function NagiChat() {
       }
       const inheritedMemory = activeConv?.inheritedMemory || "";
       let block2Parts = [dateLine];
-      if (inheritedMemory) block2Parts.push("## 前回までの記憶\n" + inheritedMemory);
+      if (inheritedMemory.trim()) block2Parts.push("## 前回までの記憶\n" + inheritedMemory);
       if (summaryText) block2Parts.push("## これまでのあらすじ\n" + summaryText);
       systemBlocks.push({ type:"text", text: block2Parts.join("\n\n"), cache_control:cc });
       if (apiMsgs.length > 1) {
@@ -3765,9 +3765,14 @@ function NagiChat() {
 
   function saveMemoryEdit() {
     const text = memoryDraft;
-    setConversations(prev => prev.map(c =>
-      c.id === activeConvId ? { ...c, inheritedMemory: text, memoryEdited: true, updatedAt: Date.now() } : c
-    ));
+    setConversations(prev => prev.map(c => {
+      if (c.id !== activeConvId) return c;
+      if (!text.trim()) {
+        const { inheritedMemory, memoryEdited, ...rest } = c;
+        return { ...rest, updatedAt: Date.now() };
+      }
+      return { ...c, inheritedMemory: text, memoryEdited: true, updatedAt: Date.now() };
+    }));
     setEditingMemory(false);
   }
   function cancelMemoryEdit() {
@@ -3945,9 +3950,9 @@ function NagiChat() {
                   <span style={{ fontSize:"15px",fontWeight:700,color:theme.accent,fontFamily:FONT }}>前回までの記憶</span>
                 </div>
                 <div style={{ display:"flex",alignItems:"center",gap:"6px" }}>
-                  {mem && !editingMemory && (
-                    <button onClick={() => { setMemoryDraft(mem); setEditingMemory(true); }} style={{ background:"none",border:`1px solid ${theme.accent}30`,borderRadius:"10px",color:theme.accent,fontSize:"12px",cursor:"pointer",padding:"4px 10px",fontFamily:FONT,transition:"all 0.2s",display:"flex",alignItems:"center",gap:"5px" }}>
-                      <PenIcon color={theme.accent} size={12} /> 編集
+                  {!editingMemory && (
+                    <button onClick={() => { setMemoryDraft(mem || ""); setEditingMemory(true); }} style={{ background:"none",border:`1px solid ${theme.accent}30`,borderRadius:"10px",color:theme.accent,fontSize:"12px",cursor:"pointer",padding:"4px 10px",fontFamily:FONT,transition:"all 0.2s",display:"flex",alignItems:"center",gap:"5px" }}>
+                      {mem ? <><PenIcon color={theme.accent} size={12} /> 編集</> : "✍️ 書き込む"}
                     </button>
                   )}
                   <button onClick={closeMemory} style={closeBtnStyle}
@@ -3984,7 +3989,7 @@ function NagiChat() {
                 </>
               ) : (
                 <div style={{ flex:1,overflowY:"auto",padding:"16px",borderRadius:"16px",background:`${theme.accent}06`,border:`1px solid ${theme.accent}12`,fontSize:"13px",lineHeight:"2",color:"#d4d4d8",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
-                  {mem || "（このスレッドに引き継ぎ記憶はありません）"}
+                  {mem || <span style={{ color:"#71717a" }}>このスレッドには引き継いだ記憶がありません。手動で書き込むこともできます</span>}
                 </div>
               )}
             </div>
