@@ -683,7 +683,7 @@ function normalizeRoomMemories(v) {
 function memoriesForSnapshot(char, roomId) {
   const common = char.memories || [];
   const room = char.memoryScope === "room" && roomId ? (normalizeRoomMemories(char.roomMemories)[roomId] || []) : [];
-  return [...common, ...room].map(m => m.text);
+  return [...common, ...room].filter(m => m.enabled !== false).map(m => m.text);
 }
 // 承認したメモリーの保存先（部屋枠ならroomId、共通枠ならnull）
 function memoryTargetRoom(char, roomId, rooms) {
@@ -2177,7 +2177,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
   const [editingLore, setEditingLore] = useState(null); // null | "new" | entry
   const [memOn, setMemOn] = useState(!!memoryEnabled);
   const [mems, setMems] = useState(Array.isArray(memories) ? memories : []);
-  const [editingMemId, setEditingMemId] = useState(null);
+  const [editingMemId, setEditingMemId] = useState(null); // null | エントリID | "new:" + bucket（手動追加）
   const [memDraft, setMemDraft] = useState("");
   const [confirmDel, setConfirmDel] = useState(null); // null | {type:"mem", bucket, id, text} | {type:"lore", id, text}
   const hasRooms = Array.isArray(rooms); // 部屋を持つキャラ（プレーンさん）の編集時だけ渡される
@@ -2274,7 +2274,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
               <h3 style={{ margin:0,fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700 }}>🧠 メモリー</h3>
               <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{mems.length + (hasRooms && mScope === "room" ? roomMemCount : 0)}件</span>
             </div>
-            <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>キャラが会話中に「覚えておきたい」と申請し、承認した内容がここに貯まります。ON/OFF・編集・削除は次の新しいスレッドから反映されます</div>
+            <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>キャラが会話中に「覚えておきたい」と申請し、承認した内容がここに貯まります。手動で追加することもできます。追加・ON/OFF・編集・削除は次の新しいスレッドから反映されます</div>
             <div onClick={() => setMemOn(v => !v)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",marginBottom:"10px" }}>
               <LoreToggle on={memOn} onChange={setMemOn} color={ac} />
               <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{memOn ? "ON — 申請を受け付ける" : "OFF — メモリーを使わない"}</span>
@@ -2307,18 +2307,22 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                   </div>
                 );
                 const moveTargets = [{ key:"", label:"共通" }, ...(rooms || []).map(r => ({ key:r.id, label:r.name }))];
-                const renderItem = (m, bucket) => editingMemId === m.id ? (
-                  <div key={m.id} style={{ padding:"10px",borderRadius:"16px",background:"rgba(255,255,255,0.025)",border:`1.5px solid ${ac}40` }}>
+                const renderEditor = (key, onDecide) => (
+                  <div key={key} style={{ padding:"10px",borderRadius:"16px",background:"rgba(255,255,255,0.025)",border:`1.5px solid ${ac}40` }}>
                     <textarea value={memDraft} onChange={e => setMemDraft(e.target.value)} rows={3} autoFocus
                       style={{ width:"100%",padding:"10px 12px",borderRadius:"12px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"#e4e4e7",fontSize:"12.5px",lineHeight:"1.7",fontFamily:FONT,outline:"none",resize:"vertical",boxSizing:"border-box" }} />
                     <div style={{ display:"flex",gap:"6px",justifyContent:"flex-end",marginTop:"8px" }}>
                       <button onClick={() => setEditingMemId(null)} style={{ padding:"6px 12px",borderRadius:"10px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontSize:"11.5px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
-                      <button onClick={() => { const v = memDraft.trim(); if (!v) return; updateBucket(bucket, arr => arr.map(x => x.id === m.id ? { ...x, text:v } : x)); setEditingMemId(null); }} disabled={!memDraft.trim()}
+                      <button onClick={() => { const v = memDraft.trim(); if (!v) return; onDecide(v); setEditingMemId(null); }} disabled={!memDraft.trim()}
                         style={{ padding:"6px 12px",borderRadius:"10px",border:"none",background:t.userGradient,color:"#fff",fontSize:"11.5px",cursor:"pointer",fontFamily:FONT,fontWeight:600,opacity:memDraft.trim() ? 1 : 0.4 }}>決定</button>
                     </div>
                   </div>
-                ) : (
-                  <div key={m.id} style={{ display:"flex",alignItems:"flex-start",gap:"8px",padding:"10px 12px",borderRadius:"16px",background:"rgba(255,255,255,0.025)",border:`1.5px solid ${ac}1f` }}>
+                );
+                const renderItem = (m, bucket) => {
+                  if (editingMemId === m.id) return renderEditor(m.id, v => updateBucket(bucket, arr => arr.map(x => x.id === m.id ? { ...x, text:v } : x)));
+                  const on = m.enabled !== false;
+                  return (
+                  <div key={m.id} style={{ display:"flex",alignItems:"flex-start",gap:"8px",padding:"10px 12px",borderRadius:"16px",background:"rgba(255,255,255,0.025)",border:`1.5px solid ${ac}1f`,opacity:on ? 1 : 0.5,transition:"opacity 0.2s" }}>
                     <span style={{ color:ac,fontSize:"11px",lineHeight:"1.8",flexShrink:0 }}>✦</span>
                     <div style={{ flex:1,minWidth:0 }}>
                       <div style={{ fontSize:"12.5px",color:"#e4e4e7",lineHeight:"1.7",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>{m.text}</div>
@@ -2333,6 +2337,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                         )}
                       </div>
                     </div>
+                    <div style={{ paddingTop:"3px" }}><LoreToggle on={on} color={ac} onChange={v => updateBucket(bucket, arr => arr.map(x => x.id === m.id ? { ...x, enabled:v } : x))} /></div>
                     <button onClick={() => { setEditingMemId(m.id); setMemDraft(m.text); }} title="編集" style={iconBtnStyle}
                       onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
                       <PenIcon color={`${ac}66`} size={14} />
@@ -2342,19 +2347,30 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                       <XIcon color={`${ac}66`} size={14} />
                     </button>
                   </div>
-                );
+                  );
+                };
+                const renderAdd = bucket => {
+                  const key = "new:" + bucket;
+                  if (editingMemId === key) return renderEditor(key, v => updateBucket(bucket, arr => [...arr, { id: uid(), text: v, createdAt: Date.now() }]));
+                  return (
+                    <button key={key} onClick={() => { setEditingMemId(key); setMemDraft(""); }}
+                      style={{ width:"100%",padding:"10px",borderRadius:"16px",border:`1.5px dashed ${ac}40`,background:`${ac}08`,color:ac,fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:600 }}>＋ 手動で追加</button>
+                  );
+                };
                 const empty = text => <div style={{ fontSize:"11px",color:"#3f3f46",textAlign:"center",padding:"12px",fontFamily:FONT,borderRadius:"14px",border:"1px dashed rgba(255,255,255,0.06)" }}>{text}</div>;
                 if (!(hasRooms && mScope === "room")) {
-                  return <>{mems.length === 0 && empty("まだ覚えていることはありません")}{mems.map(m => renderItem(m, ""))}</>;
+                  return <>{mems.length === 0 && empty("まだ覚えていることはありません")}{mems.map(m => renderItem(m, ""))}{renderAdd("")}</>;
                 }
                 return (
                   <>
                     {groupTitle("🌐 共通（全部屋）", mems.length)}
                     {mems.length === 0 ? empty("共通の記憶はありません") : mems.map(m => renderItem(m, ""))}
+                    {renderAdd("")}
                     {(rooms || []).map(r => (
                       <React.Fragment key={r.id}>
                         {groupTitle("☁️ " + r.name, bucketItems(r.id).length)}
                         {bucketItems(r.id).length === 0 ? empty("この部屋だけの記憶はありません") : bucketItems(r.id).map(m => renderItem(m, r.id))}
+                        {renderAdd(r.id)}
                       </React.Fragment>
                     ))}
                     {orphanRoomIds.map(id => (
