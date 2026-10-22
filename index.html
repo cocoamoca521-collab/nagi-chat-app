@@ -1931,22 +1931,28 @@ function CharSwitcher({ chars, activeId, onSwitch, theme, onBackLongPressStart, 
 
 // ═══ Delete Confirm Dialog ═══
 const snip = s => (s || "").length > 20 ? s.slice(0, 20) + "…" : (s || "");
-function DeleteConfirmDialog({ onConfirm, onCancel, theme, message }) {
+function DeleteConfirmDialog({ onConfirm, onCancel, theme, message, icon = "🗑️", title = "本当に削除する？", confirmLabel = "削除する", kind = "deleteConfirm" }) {
   const t = theme || THEMES.nagi;
-  useOverlayHistory(true, onCancel, "deleteConfirm");
+  useOverlayHistory(true, onCancel, kind);
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
       <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5), 0 0 30px ${t.accent}10`,textAlign:"center" }}>
-        <div style={{ fontSize:"32px",marginBottom:"14px" }}>🗑️</div>
-        <div style={{ fontSize:"15px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,marginBottom:"8px" }}>本当に削除する？</div>
+        <div style={{ fontSize:"32px",marginBottom:"14px" }}>{icon}</div>
+        <div style={{ fontSize:"15px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,marginBottom:"8px" }}>{title}</div>
         <div style={{ fontSize:"12px",color:"#71717a",fontFamily:FONT,marginBottom:"22px",lineHeight:"1.6" }}>{message || "この会話は元に戻せないよ"}</div>
         <div style={{ display:"flex",gap:"10px" }}>
           <button onClick={onCancel} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:500,transition:"all 0.2s" }}>やめる</button>
-          <button onClick={onConfirm} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:"linear-gradient(135deg, #ef4444, #f87171)",color:"#fff",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:600,transition:"all 0.2s",boxShadow:"0 3px 12px rgba(239,68,68,0.3)" }}>削除する</button>
+          <button onClick={onConfirm} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:"linear-gradient(135deg, #ef4444, #f87171)",color:"#fff",fontSize:"13px",cursor:"pointer",fontFamily:FONT,fontWeight:600,transition:"all 0.2s",boxShadow:"0 3px 12px rgba(239,68,68,0.3)" }}>{confirmLabel}</button>
         </div>
       </div>
     </div>
   );
+}
+
+// 未保存の変更があるまま閉じようとした時の確認
+function DiscardConfirmDialog({ onConfirm, onCancel, theme }) {
+  return <DeleteConfirmDialog theme={theme} onConfirm={onConfirm} onCancel={onCancel} kind="discardConfirm"
+    icon="📝" title="変更を破棄する？" message="保存していない変更は消えちゃうよ" confirmLabel="破棄する" />;
 }
 
 // ═══ Shared Styles ═══
@@ -2161,13 +2167,17 @@ function LoreEntryModal({ entry, onSave, onClose, theme }) {
   };
   const commitKeyword = () => { setKeywords(withPendingKeyword()); setKwInput(""); };
   const canSave = title.trim().length > 0 && content.trim().length > 0;
-  useOverlayHistory(true, onClose, "loreEntry");
+  const snap = JSON.stringify([title, keywords, kwInput, content, enabled]);
+  const initialSnap = useRef(snap).current;
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const requestClose = () => snap !== initialSnap ? setConfirmDiscard(true) : onClose();
+  useOverlayHistory(true, requestClose, "loreEntry");
   return (
     <div style={{ ...overlayStyle, zIndex:110 }}>
       <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${ac}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${ac}08`,maxHeight:"88vh",overflowY:"auto" }}>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"20px" }}>
           <h2 style={h2Style}>📖 {entry ? "エントリを編集" : "新しいエントリ"}</h2>
-          <button onClick={onClose} style={closeBtnStyle}
+          <button onClick={requestClose} style={closeBtnStyle}
             onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
             <XIcon color={`${ac}66`} size={18} />
           </button>
@@ -2206,11 +2216,12 @@ function LoreEntryModal({ entry, onSave, onClose, theme }) {
           <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>{enabled ? "有効" : "無効（発動しない）"}</span>
         </div>
         <div style={{ display:"flex",gap:"10px",marginTop:"22px" }}>
-          <button onClick={onClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
+          <button onClick={requestClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
           <button onClick={() => canSave && onSave({ id: entry?.id || uid(), title: title.trim(), keywords: withPendingKeyword(), content: content.trim(), enabled })} disabled={!canSave}
             style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:canSave ? t.userGradient : "rgba(255,255,255,0.06)",color:canSave ? "#fff" : "#52525b",fontSize:"13px",cursor:canSave ? "pointer" : "default",fontWeight:600,fontFamily:FONT }}>保存</button>
         </div>
       </div>
+      {confirmDiscard && <DiscardConfirmDialog theme={t} onCancel={() => setConfirmDiscard(false)} onConfirm={() => { setConfirmDiscard(false); onClose(); }} />}
     </div>
   );
 }
@@ -2256,7 +2267,13 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
   const t = theme || THEMES.nagi;
   const ac = t.accent, acl = t.accentLight;
   const iconBtnStyle = { background:"none",border:"none",cursor:"pointer",padding:"5px",display:"flex",flexShrink:0 };
-  useOverlayHistory(true, onClose, "promptEditor");
+  const snap = JSON.stringify([t2, lore, pMode, cProfile, memOn, mems, mScope, roomMems]);
+  const initialSnap = useRef(snap).current;
+  const memDraftBase = editingMemId === null ? null : ([...mems, ...Object.values(roomMems).flat()].find(x => x.id === editingMemId)?.text ?? "");
+  const dirty = snap !== initialSnap || (memDraftBase !== null && memDraft !== memDraftBase);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const requestClose = () => dirty ? setConfirmDiscard(true) : onClose();
+  useOverlayHistory(true, requestClose, "promptEditor");
   return (
     <>
     <div style={{...overlayStyle, flexDirection:"column", alignItems:"stretch"}}>
@@ -2265,7 +2282,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
           {charAvatar && <Avatar src={charAvatar} size={32} border={`2px solid ${t.accent}40`} />}
           <div><h2 style={{...h2Style,marginBottom:"2px"}}>📝 {charName}</h2><div style={{ fontSize:"11px",color:"#52525b",fontFamily:FONT }}>{hasLore ? "システムプロンプト・ロアブック編集" : "システムプロンプト編集"}</div></div>
         </div>
-        <button onClick={onClose} style={closeBtnStyle}
+        <button onClick={requestClose} style={closeBtnStyle}
           onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
           <XIcon color={`${t.accent}66`} size={18} />
         </button>
@@ -2451,7 +2468,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
         )}
       </div>
       <div style={{ padding:"10px 14px 18px",display:"flex",gap:"8px",borderTop:`1px solid ${t.accent}15` }}>
-        <button onClick={onClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
+        <button onClick={requestClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
         <button onClick={() => onSave(t2, lore, pMode, cProfile, memOn, mems, mScope, Object.fromEntries(Object.entries(roomMems).filter(([, arr]) => arr.length > 0)))} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT }}>保存</button>
       </div>
     </div>
@@ -2471,6 +2488,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
           setConfirmDel(null);
         }} />
     )}
+    {confirmDiscard && <DiscardConfirmDialog theme={t} onCancel={() => setConfirmDiscard(false)} onConfirm={() => { setConfirmDiscard(false); onClose(); }} />}
     </>
   );
 }
@@ -4007,7 +4025,11 @@ function NagiChat() {
   const inChat = screen === "chat";
   useOverlayHistory(inChat && !!restoreConfirm, () => setRestoreConfirm(null), "restoreConfirm");
   useOverlayHistory(inChat && showPromptChoice, () => setShowPromptChoice(false), "promptChoice");
-  useOverlayHistory(inChat && showMemory, () => { setShowMemory(false); setEditingMemory(false); }, "memory");
+  const [confirmDiscardMemory, setConfirmDiscardMemory] = useState(false);
+  const closeMemory = () => { setShowMemory(false); setEditingMemory(false); };
+  const memoryDirty = editingMemory && memoryDraft !== (activeConv?.inheritedMemory || "");
+  const requestCloseMemory = () => memoryDirty ? setConfirmDiscardMemory(true) : closeMemory();
+  useOverlayHistory(inChat && showMemory, requestCloseMemory, "memory");
 
   if (screen === "top") return <TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} conversations={conversations} />;
   if (screen === "rooms") return <RoomSelect rooms={rooms} conversations={conversations} onEnter={enterRoom} onSaveRoom={handleSaveRoom} onDeleteRoom={handleDeleteRoom} onBack={() => setScreen("top")} />;
@@ -4052,9 +4074,8 @@ function NagiChat() {
       {/* Memory Viewer Modal */}
       {showMemory && (() => {
         const mem = activeConv?.inheritedMemory;
-        const closeMemory = () => { setShowMemory(false); setEditingMemory(false); };
         return (
-          <div style={overlayStyle} onClick={closeMemory}>
+          <div style={overlayStyle} onClick={requestCloseMemory}>
             <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${theme.accent}10` }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px" }}>
                 <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
@@ -4067,7 +4088,7 @@ function NagiChat() {
                       {mem ? <><PenIcon color={theme.accent} size={12} /> 編集</> : "✍️ 書き込む"}
                     </button>
                   )}
-                  <button onClick={closeMemory} style={closeBtnStyle}
+                  <button onClick={requestCloseMemory} style={closeBtnStyle}
                     onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = theme.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${theme.accent}66`}>
                     <XIcon color={`${theme.accent}66`} size={18} />
                   </button>
@@ -4108,6 +4129,8 @@ function NagiChat() {
           </div>
         );
       })()}
+
+      {confirmDiscardMemory && <DiscardConfirmDialog theme={theme} onCancel={() => setConfirmDiscardMemory(false)} onConfirm={() => { setConfirmDiscardMemory(false); closeMemory(); }} />}
 
       {/* Header */}
       <div ref={headerRef} style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
