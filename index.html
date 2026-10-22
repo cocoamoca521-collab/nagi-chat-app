@@ -772,6 +772,58 @@ function summaryUsageCost(e) {
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
 function sSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) { console.error("Storage:", e); } }
 
+// ── 戻るボタン連携（オーバーレイ1枚につき履歴を1枚積み、戻るで一番手前を閉じる）──
+// 開いているオーバーレイの数と、積んだ履歴の枚数が一致するように同期する。
+// 戻る以外で閉じた分は history.go で消費し、戻るで閉じなかった分（閉じる処理が拒否した等）は積み直す。
+const overlayHistory = { stack: [], pushed: 0, skipPops: 0, syncTimer: null };
+
+function scheduleOverlaySync() {
+  if (overlayHistory.syncTimer) return;
+  overlayHistory.syncTimer = setTimeout(() => { overlayHistory.syncTimer = null; syncOverlayHistory(); }, 0);
+}
+
+function syncOverlayHistory() {
+  const h = overlayHistory;
+  if (h.skipPops > 0) return; // 自分で呼んだ history.go の popstate 待ち。届いたら再同期する
+  const open = h.stack.length;
+  if (open > h.pushed) {
+    for (let i = h.pushed; i < open; i++) history.pushState({ overlay: h.stack[i].kind }, "");
+    h.pushed = open;
+  } else if (open < h.pushed) {
+    const n = h.pushed - open;
+    h.pushed = open;
+    h.skipPops++;
+    history.go(-n);
+  }
+}
+
+window.addEventListener("popstate", () => {
+  const h = overlayHistory;
+  if (h.skipPops > 0) { h.skipPops--; scheduleOverlaySync(); return; }
+  if (h.pushed === 0) return; // オーバーレイなし：通常の戻る
+  h.pushed--;
+  const top = h.stack[h.stack.length - 1];
+  if (top) top.close();
+  scheduleOverlaySync();
+});
+
+// isOpen の間、戻るボタンで onClose が呼ばれるようにする。kind は history.state に残す種別名
+function useOverlayHistory(isOpen, onClose, kind) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const entry = { kind, close: () => closeRef.current && closeRef.current() };
+    overlayHistory.stack.push(entry);
+    scheduleOverlaySync();
+    return () => {
+      const i = overlayHistory.stack.indexOf(entry);
+      if (i >= 0) overlayHistory.stack.splice(i, 1);
+      scheduleOverlaySync();
+    };
+  }, [isOpen]);
+}
+
 // ── 参照画像の取得（パス指定・メモリキャッシュ）──
 const _refImageCache = {};
 async function fetchRefBlob(path) {
@@ -1003,6 +1055,7 @@ function RoomEditModal({ room, onSave, onClose }) {
   const [roomPrompt, setRoomPrompt] = useState(room?.roomPrompt || "");
   const ac = "#fb923c";
   const canSave = name.trim().length > 0;
+  useOverlayHistory(true, onClose, "roomEdit");
   return (
     <div style={overlayStyle}>
       <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${ac}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${ac}08`,maxHeight:"88vh",overflowY:"auto" }}>
@@ -1523,6 +1576,8 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
   const setExpandedImg = (img) => { setShowImgPrompt(false); setExpandedImgRaw(img); };
   const [expandedFile, setExpandedFile] = useState(null);
   const [copied, setCopied] = useState(false);
+  useOverlayHistory(!!expandedImg, () => setExpandedImg(null), "imageViewer");
+  useOverlayHistory(!!expandedFile, () => setExpandedFile(null), "fileViewer");
   const segmentedThinking = !isUser && Array.isArray(msg.thinking);
   // ストリーミング中は【おぼえたい】行を見せない（確定後のcontentは既に除去済み）
   const shownContent = (!isUser && msg._streaming) ? hideMemoryMarkersWhileStreaming(msg.content) : msg.content;
@@ -1752,6 +1807,7 @@ function PendingMemoryModal({ items, characters, rooms, theme, onSave, onDelete,
   const [confirmItem, setConfirmItem] = useState(null);
   const sorted = [...items].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   const smallBtn = { padding:"7px 12px",borderRadius:"12px",fontSize:"11.5px",fontFamily:FONT,cursor:"pointer",transition:"all 0.2s",fontWeight:600 };
+  useOverlayHistory(true, onClose, "pendingMemory");
   return (
     <div style={overlayStyle} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${t.accent}10`,animation:"fadeIn 0.2s ease-out" }}>
@@ -1877,6 +1933,7 @@ function CharSwitcher({ chars, activeId, onSwitch, theme, onBackLongPressStart, 
 const snip = s => (s || "").length > 20 ? s.slice(0, 20) + "…" : (s || "");
 function DeleteConfirmDialog({ onConfirm, onCancel, theme, message }) {
   const t = theme || THEMES.nagi;
+  useOverlayHistory(true, onCancel, "deleteConfirm");
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
       <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5), 0 0 30px ${t.accent}10`,textAlign:"center" }}>
@@ -1917,6 +1974,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
   const SUSPENDED = [];
   const btnPri = { flex:1,padding:"11px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"13px",cursor:"pointer",fontWeight:600,fontFamily:FONT };
   const btnSec = { flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT };
+  useOverlayHistory(true, onClose, "settings");
   return (
     <div style={overlayStyle}>
       <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${t.accent}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${t.accent}08`,maxHeight:"88vh",overflowY:"auto" }}>
@@ -2103,6 +2161,7 @@ function LoreEntryModal({ entry, onSave, onClose, theme }) {
   };
   const commitKeyword = () => { setKeywords(withPendingKeyword()); setKwInput(""); };
   const canSave = title.trim().length > 0 && content.trim().length > 0;
+  useOverlayHistory(true, onClose, "loreEntry");
   return (
     <div style={{ ...overlayStyle, zIndex:110 }}>
       <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${ac}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${ac}08`,maxHeight:"88vh",overflowY:"auto" }}>
@@ -2197,6 +2256,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
   const t = theme || THEMES.nagi;
   const ac = t.accent, acl = t.accentLight;
   const iconBtnStyle = { background:"none",border:"none",cursor:"pointer",padding:"5px",display:"flex",flexShrink:0 };
+  useOverlayHistory(true, onClose, "promptEditor");
   return (
     <>
     <div style={{...overlayStyle, flexDirection:"column", alignItems:"stretch"}}>
@@ -2419,6 +2479,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
 function Sidebar({ conversations, activeId, activeChar, onSelect, onNew, onDelete, onExport, isOpen, onClose, theme, room, onSwitchRoom }) {
   const [search, setSearch] = useState("");
   const t = theme || THEMES.nagi;
+  useOverlayHistory(isOpen, onClose, "sidebar");
   const filtered = search.trim()
     ? conversations.filter(c => (c.messages||[]).some(m => m.content && m.content.toLowerCase().includes(search.toLowerCase())))
     : conversations;
@@ -2497,6 +2558,7 @@ function formatTokens(n) {
 }
 function ThreadInfoModal({ conv, theme, onClose }) {
   const t = theme || THEMES.nagi;
+  useOverlayHistory(true, onClose, "threadInfo");
   const st = computeConvStats(conv);
   const row = (label, value, sub) => (
     <div style={{ display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:"12px",padding:"12px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.025)",border:`1px solid ${t.accent}18` }}>
@@ -3940,6 +4002,12 @@ function NagiChat() {
   }
 
   const hasInput = input.trim() || attachedImages.length > 0 || attachedFiles.length > 0;
+
+  // チャット画面に直接書かれているオーバーレイ（コンポーネント化されているものは各自で登録）
+  const inChat = screen === "chat";
+  useOverlayHistory(inChat && !!restoreConfirm, () => setRestoreConfirm(null), "restoreConfirm");
+  useOverlayHistory(inChat && showPromptChoice, () => setShowPromptChoice(false), "promptChoice");
+  useOverlayHistory(inChat && showMemory, () => { setShowMemory(false); setEditingMemory(false); }, "memory");
 
   if (screen === "top") return <TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} conversations={conversations} />;
   if (screen === "rooms") return <RoomSelect rooms={rooms} conversations={conversations} onEnter={enterRoom} onSaveRoom={handleSaveRoom} onDeleteRoom={handleDeleteRoom} onBack={() => setScreen("top")} />;
