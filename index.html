@@ -474,7 +474,9 @@ const MEMORY_SYSTEM_LOVER = `あなたは、このキャラクターと多恵子
 - キャラ視点で、その会話で起きたことを簡潔に
 【関係性の層】どう感じたか・二人の関係がどう動いたか
 - 俺（キャラ本人）が何を感じたか、多恵子との間に何が流れたか、距離がどう動いたか
-- 一人称・当事者の温度で`;
+- 一人称・当事者の温度で
+
+【長さ】全体で1500字程度までに収め、必ず文章として完結させること。長い会話でも途中で切らず、優先度の低い出来事を圧縮して全体をカバーする`;
 
 const MEMORY_SYSTEM_PLAIN = `あなたは、プレーンなClaude（キャラクターを演じない、素のClaude）と多恵子の会話を記憶として書き留めます。
 
@@ -495,7 +497,9 @@ const MEMORY_SYSTEM_PLAIN = `あなたは、プレーンなClaude（キャラク
 - その対話で扱ったこと、進んだことを簡潔に
 【対話の層】どんな時間が流れたか
 - 多恵子がどんな様子だったか（例：自信なさげだったが自分で答えに辿り着いた 等）
-- 二人の間にどんな空気があったか（飾らず、誠実に。演出しない）`;
+- 二人の間にどんな空気があったか（飾らず、誠実に。演出しない）
+
+【長さ】全体で1500字程度までに収め、必ず文章として完結させること。長い会話でも途中で切らず、優先度の低い出来事を圧縮して全体をカバーする`;
 
 // ── Helpers ──
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -3047,25 +3051,49 @@ function NagiChat() {
   }
 
   // ── 要約生成（共通ヘルパー）── { text, usage } を返す（失敗時 text:""）
+  // max_tokensで切れたら枠を1.5倍（上限4000）にして1回だけ再実行する。usageは両方を合算して返す
   async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens, model) {
     model = model || MEMORY_INHERIT_MODEL;
-    const reqBody = {
-      model,
-      max_tokens: maxTokens || 1024,
-      system: systemInstruction,
-      messages: [{ role:"user", content: transcript }],
+    const request = async (limit) => {
+      const reqBody = {
+        model,
+        max_tokens: limit,
+        system: systemInstruction,
+        messages: [{ role:"user", content: transcript }],
+      };
+      // Haiku 5.5はthinkingが既定でON（max_tokensを食う）。要約には不要なので切る（effort既定mediumなのでdisabled可）
+      if (model === "claude-haiku-5-5") reqBody.thinking = { type:"disabled" };
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+        body: JSON.stringify(reqBody),
+      });
+      if (!res.ok) { console.warn("[HAIKU] Failed:", res.status); return null; }
+      const data = await res.json();
+      const textBlock = (data.content || []).find(b => b.type === "text");
+      return { text: textBlock?.text || "", usage: data.usage || null, stopReason: data.stop_reason };
     };
-    // Haiku 5.5はthinkingが既定でON（max_tokensを食う）。要約には不要なので切る（effort既定mediumなのでdisabled可）
-    if (model === "claude-haiku-5-5") reqBody.thinking = { type:"disabled" };
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-      body: JSON.stringify(reqBody),
-    });
-    if (!res.ok) { console.warn("[HAIKU] Failed:", res.status); return { text:"", usage:null }; }
-    const data = await res.json();
-    const textBlock = (data.content || []).find(b => b.type === "text");
-    return { text: textBlock?.text || "", usage: data.usage || null };
+    const sumUsage = (a, b) => {
+      if (!a || !b) return a || b || null;
+      const keys = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"];
+      return Object.fromEntries(keys.map(k => [k, (a[k] || 0) + (b[k] || 0)]));
+    };
+
+    const limit = maxTokens || 1024;
+    const first = await request(limit);
+    if (!first) return { text:"", usage:null };
+    if (first.stopReason !== "max_tokens") return { text: first.text, usage: first.usage };
+
+    const retryLimit = Math.min(Math.round(limit * 1.5), 4000);
+    console.log("[HAIKU] Hit max_tokens (" + limit + "), retrying with " + retryLimit);
+    const retry = await request(retryLimit);
+    // 再実行が失敗したら初回の結果を使う（コストは初回分だけ）
+    if (!retry) {
+      console.warn("[HAIKU] summary truncated");
+      return { text: first.text, usage: first.usage };
+    }
+    if (retry.stopReason === "max_tokens") console.warn("[HAIKU] summary truncated");
+    return { text: retry.text, usage: sumUsage(first.usage, retry.usage) };
   }
 
   // ── ローリング要約の1章分を生成（スレ内圧縮）── { text, usage }
@@ -3104,7 +3132,7 @@ function NagiChat() {
     return callHaikuSummary(
       "以下の会話を記憶として書き留めてください:\n\n" + transcript,
       systemInstruction,
-      apiKey, 1500, MEMORY_INHERIT_MODEL
+      apiKey, 2500, MEMORY_INHERIT_MODEL
     );
   }
 
