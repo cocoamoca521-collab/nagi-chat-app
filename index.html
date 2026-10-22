@@ -240,7 +240,7 @@ function messageCostOf(m) {
   return { ...calcMessageCost(m, modelId), modelId };
 }
 
-// ── スレ別：累計コスト（会話のusage＋要約Haikuのusage）と現在のコンテキストサイズ ──
+// ── スレ別：累計コスト（会話のusage＋要約Haiku・中断リクエストのusage）と現在のコンテキストサイズ ──
 function computeConvStats(conv) {
   let total = 0, unknown = false, contextTokens = null;
   const msgs = conv?.messages || [];
@@ -755,13 +755,14 @@ function stripAllThinking(content, fallbackText) {
   const stripped = content.filter(b => b?.type !== "thinking" && b?.type !== "redacted_thinking");
   return stripped.length > 0 ? stripped : (fallbackText || "…");
 }
-// 裏方Haiku（あらすじ要約・記憶引き継ぎ）のusageを1呼び出し1件で会話に記録する。
+// 裏方Haiku（あらすじ要約・記憶引き継ぎ）や、中断した本体リクエスト（kind:"aborted"）のusageを1呼び出し1件で会話に記録する。
 // 日時を持たせて、スレ累計（全件）と月間集計（今月分）の両方に使う
 function addSummaryUsage(prev, model, u, kind) {
   return [...(Array.isArray(prev) ? prev : []), {
     at: Date.now(), model, kind: kind || "summary",
     input: u.input_tokens || 0, output: u.output_tokens || 0,
     cacheRead: u.cache_read_input_tokens || 0, cacheCreate: u.cache_creation_input_tokens || 0,
+    ...(u.cache_creation ? { cacheCreate5m: u.cache_creation.ephemeral_5m_input_tokens || 0, cacheCreate1h: u.cache_creation.ephemeral_1h_input_tokens || 0 } : {}),
   }];
 }
 // 記録1件の概算コスト
@@ -843,7 +844,7 @@ async function getRefImageBlob(char) {
 
 // ── OpenAI Images API（画像生成）──
 // refBlobs: null / Blob / Blobの配列。1枚以上あればedits（参照つき）、なければgenerations
-async function callOpenAIImage(prompt, apiKey, model, refBlobs) {
+async function callOpenAIImage(prompt, apiKey, model, refBlobs, signal) {
   const blobs = (Array.isArray(refBlobs) ? refBlobs : [refBlobs]).filter(Boolean);
   let res;
   if (blobs.length > 0) {
@@ -860,6 +861,7 @@ async function callOpenAIImage(prompt, apiKey, model, refBlobs) {
       // Content-Typeは指定しない（FormDataがboundary付きで自動設定する。手動で書くと壊れる）
       headers: { "Authorization": "Bearer " + apiKey },
       body: form,
+      signal,
     });
   } else {
     res = await fetch("https://api.openai.com/v1/images/generations", {
@@ -867,6 +869,7 @@ async function callOpenAIImage(prompt, apiKey, model, refBlobs) {
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
       // size固定（1024x1024）。将来toolのinputでアスペクト比を指定できるようにする余地あり
       body: JSON.stringify({ model, prompt, size: "1024x1024", n: 1 }),
+      signal,
     });
   }
   if (!res.ok) {
@@ -2654,6 +2657,7 @@ function NagiChat() {
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const sendingRef = useRef(false);
+  const activeRequestRef = useRef(null); // 進行中の本体リクエスト { controller, convId, model, completedUsages, partialUsage }
   const summaryInFlightRef = useRef(new Set()); // 章を生成中の会話ID
   const chatAreaRef = useRef(null);
   const fileRef = useRef(null);
@@ -3310,7 +3314,8 @@ function NagiChat() {
   }
 
   // ── SSEストリーム読み取り（初回・tool_use継続の両方で共通利用）──
-  async function consumeAnthropicStream(res, aTs, requestedModel) {
+  // onUsage: usageが届くたびに呼ばれる（途中で中断された場合も、それまでに届いた分を記録できるように）
+  async function consumeAnthropicStream(res, aTs, requestedModel, onUsage) {
     let streamText = "";
     let streamThinking = "";
     let modelActual = requestedModel;
@@ -3339,6 +3344,7 @@ function NagiChat() {
           modelActual = event.message.model || requestedModel;
           if (event.message.usage) {
             usageData = mergeUsage(usageData, event.message.usage);
+            onUsage?.(usageData);
             console.log("[CACHE DEBUG] message_start usage:", JSON.stringify(event.message.usage));
           }
         }
@@ -3409,6 +3415,7 @@ function NagiChat() {
         if (event.type === "message_delta") {
           if (event.usage) {
             usageData = mergeUsage(usageData, event.usage);
+            onUsage?.(usageData);
             console.log("[CACHE DEBUG] message_delta usage:", JSON.stringify(event.usage));
           }
           // stop_reason によるコンテンツフィルタ検出
@@ -3494,6 +3501,12 @@ function NagiChat() {
     if (sendingRef.current) return; // 連打による多重送信防止（loading state反映前の同期ガード）
     sendingRef.current = true;
     appendMsgs = appendMsgs || [];
+    // 直前のユーザーメッセージを生成中に編集できるよう、中断用のコントローラを持っておく
+    const request = { controller: new AbortController(), convId: activeConvId, model: settings.model, completedUsages: [], partialUsage: null };
+    const signal = request.controller.signal;
+    const trackUsage = u => { request.partialUsage = u; };
+    activeRequestRef.current = request;
+    let aTs = null; // ストリーミング中のアシスタントメッセージ（中断時に破棄する）
     setLoading(true);
     try {
       // ── 【B】ローリング要約（ラチェット式）──
@@ -3659,6 +3672,7 @@ function NagiChat() {
         method:"POST",
         headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true", "anthropic-beta":anthropicBetaHeader(cacheTtl) },
         body:JSON.stringify(body),
+        signal,
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -3668,11 +3682,13 @@ function NagiChat() {
         throw err;
       }
 
-      const aTs = Date.now();
+      aTs = Date.now();
       const placeholderMsg = { role:"assistant", content:"", thinking:null, thinkingRequested:settings.thinkingEnabled, timestamp:aTs, charIcon:activeChar.icon, charName:activeChar.name, modelRequested:settings.model, modelActual:settings.model, _streaming:true };
       updateConv(c => ({...c, messages:[...c.messages, ...appendMsgs, placeholderMsg].filter((m,i,arr) => i===arr.findIndex(x => x.timestamp===m.timestamp))}));
 
-      let result = await consumeAnthropicStream(res, aTs, settings.model);
+      let result = await consumeAnthropicStream(res, aTs, settings.model, trackUsage);
+      request.completedUsages.push(result.usage);
+      request.partialUsage = null;
 
       // ── tool_use（generate_image）継続フロー ──
       let apiMessagesForStorage = null;
@@ -3686,7 +3702,7 @@ function NagiChat() {
           try {
             const refBlob = await getRefImageBlob(activeChar);
             const userBlob = toolBlock.input?.include_user ? await fetchRefBlob(USER_REF_IMAGE) : null;
-            const imgResult = await callOpenAIImage(imgPrompt, settings.openaiApiKey, settings.imageModel, [refBlob, userBlob]);
+            const imgResult = await callOpenAIImage(imgPrompt, settings.openaiApiKey, settings.imageModel, [refBlob, userBlob], signal);
             if (imgResult.base64) {
               const shrunk = await shrinkBase64Image(imgResult.base64, 512, 0.8);
               toolResultContent = [
@@ -3704,6 +3720,7 @@ function NagiChat() {
               throw new Error("OpenAI returned no image data");
             }
           } catch (imgErr) {
+            if (signal.aborted) throw imgErr;
             console.error("[IMAGE GEN]", imgErr);
             isError = true;
             toolResultContent = [{ type:"text", text:"画像生成に失敗しました: " + (imgErr.message || "unknown error") }];
@@ -3719,6 +3736,7 @@ function NagiChat() {
             method:"POST",
             headers:{ "Content-Type":"application/json", "x-api-key":settings.apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true", "anthropic-beta":anthropicBetaHeader(cacheTtl) },
             body:JSON.stringify(contBody),
+            signal,
           });
           if (!res2.ok) {
             const errData = await res2.json().catch(() => ({}));
@@ -3727,7 +3745,7 @@ function NagiChat() {
             err._errData = errData;
             throw err;
           }
-          const result2 = await consumeAnthropicStream(res2, aTs, settings.model);
+          const result2 = await consumeAnthropicStream(res2, aTs, settings.model, trackUsage);
           lastRequestUsage = result2.usage;
 
           apiMessagesForStorage = [assistantToolUseMsg, toolResultMsg, { role:"assistant", content:result2.fullContent }];
@@ -3792,15 +3810,50 @@ function NagiChat() {
       // 返信完了後、必要なら次の章をバックグラウンドで作る（awaitしない）
       maybeAppendSummaryChunk(activeConvId, [...allMsgs, finalMsg], getSummaryChunks(currentConv));
     } catch(err) {
-      const errorType = classifyError(err);
-      const charMsg = getCharErrorMessage(activeCharId, errorType, err.message, err._status);
-      console.error("[ERROR] type=" + errorType + " status=" + (err._status||"N/A") + " raw=" + err.message);
-      const eMsg = { role:"assistant", content: charMsg, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, errorType };
-      updateConv(c => ({...c, messages:[...c.messages, eMsg]}));
+      if (signal.aborted) {
+        // 編集による中断：未完成のアシスタントメッセージは破棄し、エラー表示はしない
+        console.log("[ABORT] request aborted for edit");
+        if (aTs != null) updateConv(c => ({...c, messages:c.messages.filter(m => m.timestamp !== aTs)}));
+        recordAbortedUsage(request);
+      } else {
+        const errorType = classifyError(err);
+        const charMsg = getCharErrorMessage(activeCharId, errorType, err.message, err._status);
+        console.error("[ERROR] type=" + errorType + " status=" + (err._status||"N/A") + " raw=" + err.message);
+        const eMsg = { role:"assistant", content: charMsg, timestamp:Date.now(), charIcon:activeChar.icon, charName:activeChar.name, errorType };
+        updateConv(c => ({...c, messages:[...c.messages, eMsg]}));
+      }
     }
+    activeRequestRef.current = null;
     sendingRef.current = false;
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
+  // ── 中断したリクエストのusageを記録 ──
+  // 完了済みのリクエスト（画像生成ターンの1回目）は実測値、ストリーミング途中のものはそれまでに届いた分だけ。
+  // 途中のものは message_start の入力・キャッシュ量は正確だが、出力トークンは message_delta が来る前に切れると
+  // ほぼ0のままになる。応答が来る前に中断した場合は何も記録されない。そのため表示コストは実際より少なく出ることがある。
+  function recordAbortedUsage(request) {
+    const usages = [...request.completedUsages, request.partialUsage].filter(u => u && Object.keys(u).length > 0);
+    if (usages.length === 0) return;
+    setConversations(prev => prev.map(c => {
+      if (c.id !== request.convId) return c;
+      let summaryUsage = c.summaryUsage;
+      for (const u of usages) summaryUsage = addSummaryUsage(summaryUsage, request.model, u, "aborted");
+      return { ...c, summaryUsage };
+    }));
+  }
+
+  // ── 中断したまま（最後がユーザーメッセージ）の会話を、そのままの文脈で送り直す ──
+  async function handleResend() {
+    if (loading) return;
+    const conv = conversations.find(c => c.id === activeConvId);
+    if (!conv || !conv.messages?.length) return;
+    if (conv.messages[conv.messages.length - 1].role !== "user") return;
+    sweepOpenProposals();
+    const historyMsgs = conv.messages.map(resolveProposalMsg);
+    updateConv(c => ({...c, messages: historyMsgs}));
+    await sendFlow(historyMsgs, []);
   }
 
   // ── AI再生成（最後のassistantメッセージを削除して同じ文脈で再送信）──
@@ -3875,6 +3928,11 @@ function NagiChat() {
   }, [activeCharId, activeConvId, activeChar]);
 
   function handleEdit(msg) {
+    // 生成中は直前のユーザーメッセージだけ編集できる。進行中のリクエストを中断してから編集モードに入る
+    if (loading) {
+      if (!activeRequestRef.current) return;
+      activeRequestRef.current.controller.abort();
+    }
     // 編集モードに入るだけ。まだ削除しない
     setEditingMsg({ msg, prevInput: input });
     setInput(msg.content || "");
@@ -4198,6 +4256,8 @@ function NagiChat() {
           const displayMsgs = messages.filter(m => !(m._streaming && !m.content));
           const lastMsg = displayMsgs[displayMsgs.length - 1];
           const lastAssistantIdx = (lastMsg && lastMsg.role === "assistant" && !lastMsg._streaming) ? displayMsgs.length - 1 : -1;
+          const lastUserIdx = displayMsgs.map(m => m.role).lastIndexOf("user");
+          const canEditWhileLoading = !!activeRequestRef.current; // 本体の生成中のみ（直接画像生成中は不可）
           return displayMsgs.map((msg, i) => {
             const prevMsg = displayMsgs[i - 1];
             const showDateSeparator = !prevMsg || !isSameDay(prevMsg.timestamp, msg.timestamp);
@@ -4207,7 +4267,7 @@ function NagiChat() {
             return (
               <React.Fragment key={msg.timestamp+"-"+i}>
                 {showDateSeparator && <DateSeparator timestamp={msg.timestamp} theme={theme} />}
-                <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={!loading ? handleEdit : null}
+                <MessageBubble msg={msg} theme={theme} charAvatar={activeChar.avatar} onEdit={(!loading || (i === lastUserIdx && canEditWhileLoading)) ? handleEdit : null}
                   isLastAssistant={i === lastAssistantIdx} onRegenerate={i === lastAssistantIdx ? handleRegenerate : null} regenerateDisabled={loading}
                   layoutMode={settings.messageLayout || "bubble"} continuesToAssistant={continuesToAssistant} continuesFromAssistant={continuesFromAssistant} />
                 {msg.memoryProposal && !msg._streaming && (
@@ -4251,6 +4311,15 @@ function NagiChat() {
               onMouseEnter={e => { e.target.style.color = "#e4e4e7"; e.target.style.background = "rgba(255,255,255,0.06)"; }}
               onMouseLeave={e => { e.target.style.color = "#a1a1aa"; e.target.style.background = "none"; }}
             >キャンセル</button>
+          </div>
+        )}
+        {!editingMsg && !loading && messages[messages.length - 1]?.role === "user" && (
+          <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",maxWidth:"720px",margin:"0 auto 6px",padding:"6px 14px",borderRadius:"12px",background:"rgba(255,255,255,0.03)",border:`1px solid ${theme.accent}20` }}>
+            <span style={{ fontSize:"12px",color:"#a1a1aa",fontFamily:FONT }}>返信が止まっています</span>
+            <button onClick={handleResend} disabled={!settings.apiKey} style={{ fontSize:"12px",color:theme.accent,background:"none",border:"none",cursor:"pointer",padding:"2px 8px",borderRadius:"8px",transition:"all 0.2s",fontFamily:FONT }}
+              onMouseEnter={e => { e.target.style.background = `${theme.accent}14`; }}
+              onMouseLeave={e => { e.target.style.background = "none"; }}
+            >再送信</button>
           </div>
         )}
         {(attachedImages.length > 0 || attachedFiles.length > 0) && (
