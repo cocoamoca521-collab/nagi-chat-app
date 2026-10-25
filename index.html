@@ -1479,6 +1479,19 @@ function ClockIcon({ color, size }) {
   );
 }
 
+// ═══ Timer Icon SVG (キャッシュ保持時間) ═══
+function TimerIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="13.5" r="7.5" />
+      <line x1="10" y1="2.5" x2="14" y2="2.5" />
+      <line x1="12" y1="2.5" x2="12" y2="6" />
+      <line x1="18.2" y1="7.3" x2="19.7" y2="5.8" />
+      <line x1="12" y1="13.5" x2="12" y2="9.5" />
+    </svg>
+  );
+}
+
 // ═══ Trash Icon SVG (削除確認) ═══
 function TrashIcon({ color, size }) {
   return (
@@ -2214,7 +2227,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
     <div style={overlayStyle}>
       <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${t.accent}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${t.accent}08`,maxHeight:"88vh",overflowY:"auto" }}>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"22px" }}>
-          <h2 style={h2Style}>⚙️ 設定</h2>
+          <h2 style={{...h2Style,display:"flex",alignItems:"center",gap:"6px"}}><GearIcon color={t.accent} size={17} />設定</h2>
           <button onClick={onClose} style={closeBtnStyle}
             onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
             <XIcon color={`${t.accent}66`} size={18} />
@@ -2286,7 +2299,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             </div>
           </div>
         )}
-        <label style={{...labelStyle,marginTop:"18px"}}>⏱️ キャッシュ保持時間</label>
+        <label style={{...labelStyle,marginTop:"18px",display:"flex",alignItems:"center",gap:"5px"}}><TimerIcon color="#71717a" size={12} />キャッシュ保持時間</label>
         <div style={{ display:"flex",gap:"6px" }}>
           {CACHE_TTLS.map(c => {
             const selected = (s.cacheTtl || "5m") === c.v;
