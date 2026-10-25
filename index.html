@@ -172,11 +172,11 @@ const MODELS = [
 const XHIGH_MODELS = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5","claude-sonnet-5-5","claude-haiku-5-5"];
 
 const EFFORTS = [
-  { v: "low", label: "ECO", icon: "🌱", desc: "省エネ", color: "#4ade80" },
-  { v: "medium", label: "標準", icon: "⚡", desc: "バランス", color: "#facc15" },
-  { v: "high", label: "深層", icon: "🔮", desc: "じっくり", color: "#a78bfa" },
-  { v: "xhigh", label: "強化", icon: "💎", desc: "high↑max↓", color: "#38bdf8" },
-  { v: "max", label: "全力", icon: "🔥", desc: "限界突破", color: "#f87171" },
+  { v: "low", label: "ECO", icon: LeafIcon, desc: "省エネ", color: "#4ade80" },
+  { v: "medium", label: "標準", icon: ZapIcon, desc: "バランス", color: "#facc15" },
+  { v: "high", label: "深層", icon: CrystalIcon, desc: "じっくり", color: "#a78bfa" },
+  { v: "xhigh", label: "強化", icon: GemIcon, desc: "high↑max↓", color: "#38bdf8" },
+  { v: "max", label: "全力", icon: FlameIcon, desc: "限界突破", color: "#f87171" },
 ];
 
 // ── モデル別単価（$ / 1M tokens）──
@@ -298,8 +298,8 @@ const CACHE_TTLS = [
 ];
 
 const IMG_MODELS = [
-  { id: "gpt-image-1-mini", label: "下書き", icon: "🌱", desc: "速い・安い", color: "#4ade80" },
-  { id: "gpt-image-2.5-sunburst",      label: "本番",   icon: "🔥", desc: "最高画質",   color: "#f87171" },
+  { id: "gpt-image-1-mini", label: "下書き", icon: LeafIcon, desc: "速い・安い", color: "#4ade80" },
+  { id: "gpt-image-2.5-sunburst",      label: "本番",   icon: FlameIcon, desc: "最高画質",   color: "#f87171" },
 ];
 
 // ── 画像生成ツール定義（Claude tool use）──
@@ -1063,7 +1063,7 @@ function RoomEditModal({ room, onSave, onClose }) {
     <div style={overlayStyle}>
       <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${ac}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${ac}08`,maxHeight:"88vh",overflowY:"auto" }}>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"20px" }}>
-          <h2 style={h2Style}>☁️ {room ? "部屋を編集" : "新しい部屋"}</h2>
+          <h2 style={{...h2Style,display:"flex",alignItems:"center",gap:"6px"}}><CloudIcon color={ac} size={18} />{room ? "部屋を編集" : "新しい部屋"}</h2>
           <button onClick={onClose} style={closeBtnStyle}
             onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
             <XIcon color={`${ac}66`} size={18} />
@@ -1109,7 +1109,7 @@ function RoomSelect({ rooms, conversations, onEnter, onSaveRoom, onDeleteRoom, o
       <div style={{ position:"relative",zIndex:1,maxWidth:"440px",margin:"0 auto",padding:"min(9vh, 64px) 18px 40px",display:"flex",flexDirection:"column",minHeight:"100%" }}>
         <button onClick={onBack} style={{ alignSelf:"flex-start",background:"none",border:"none",cursor:"pointer",color:acl,fontSize:"13px",fontFamily:FONT,padding:"4px 2px",marginBottom:"18px" }}>← トップへ</button>
         <div style={{ textAlign:"center",marginBottom:"26px" }}>
-          <div style={{ fontSize:"32px",marginBottom:"10px" }}>☁️</div>
+          <div style={{ display:"flex",justifyContent:"center",marginBottom:"10px" }}><CloudIcon color={ac} size={36} /></div>
           <h1 style={{ fontSize:"20px",fontWeight:700,color:ac,fontFamily:FONT,margin:0 }}>プレーンさんの部屋</h1>
           <p style={{ fontSize:"12px",color:"#5b5b66",marginTop:"8px" }}>どの部屋に入る？</p>
         </div>
@@ -1350,6 +1350,228 @@ function XIcon({ color, size }) {
   );
 }
 
+// ═══ Leaf Icon SVG (ECO・下書き) ═══
+function LeafIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 21v-9" />
+      <path d="M12 12C12 7.5 9 5 4 5c0 4.5 3 7 8 7z" />
+      <path d="M12 14.5c0-4 2.6-6.5 8-6.5 0 4-2.6 6.5-8 6.5z" />
+    </svg>
+  );
+}
+
+// ═══ Zap Icon SVG (標準) ═══
+function ZapIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2.5L4 13.5h7.5L10.5 21.5 20 10.5h-7.5L13 2.5z" />
+    </svg>
+  );
+}
+
+// ═══ Crystal Icon SVG (深層) ═══
+function CrystalIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="10" r="7" />
+      <path d="M9.5 6.8a3.5 3.5 0 0 1 2.5-1" />
+      <path d="M7.5 17.5L6 21h12l-1.5-3.5" />
+    </svg>
+  );
+}
+
+// ═══ Gem Icon SVG (強化) ═══
+function GemIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.5 3.5h11L21.5 9 12 20.5 2.5 9z" />
+      <path d="M2.5 9h19" />
+      <path d="M10 3.5L8 9l4 11.5L16 9l-2-5.5" />
+    </svg>
+  );
+}
+
+// ═══ Flame Icon SVG (全力・本番) ═══
+function FlameIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 21.5c-3.9 0-7-2.8-7-6.6 0-3.4 2.2-5.6 3.6-7.6.3 1.7 1.1 3 2.4 3.6C10.6 7 12 4.3 14.5 2.5c.2 3.1 4.5 6 4.5 11.4 0 4.6-3.1 7.6-7 7.6z" />
+      <path d="M12 21.5c-1.7 0-3-1.2-3-3 0-1.9 1.6-3 2.2-4.6 1.5 1 3.8 2.6 3.8 4.6 0 1.8-1.3 3-3 3z" />
+    </svg>
+  );
+}
+
+// ═══ Globe Icon SVG (翻訳・共通) ═══
+function GlobeIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <path d="M12 3a13.5 13.5 0 0 1 3.5 9A13.5 13.5 0 0 1 12 21a13.5 13.5 0 0 1-3.5-9A13.5 13.5 0 0 1 12 3z" />
+    </svg>
+  );
+}
+
+// ═══ Bell Icon SVG (保留) ═══
+function BellIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8.5a6 6 0 0 0-12 0c0 6.5-2.5 8.5-2.5 8.5h17S18 15 18 8.5z" />
+      <path d="M10.2 20.5a2 2 0 0 0 3.6 0" />
+    </svg>
+  );
+}
+
+// ═══ Inbox Icon SVG (復元) ═══
+function InboxIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 14h5l1.5 2.5h5L16 14h5" />
+      <path d="M3 14v4.5A1.5 1.5 0 0 0 4.5 20h15a1.5 1.5 0 0 0 1.5-1.5V14" />
+      <line x1="12" y1="3" x2="12" y2="11" />
+      <polyline points="8.5,7.5 12,11 15.5,7.5" />
+    </svg>
+  );
+}
+
+// ═══ Box Icon SVG (バックアップ) ═══
+function BoxIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2.5l8.5 4.5v10L12 21.5 3.5 17V7z" />
+      <polyline points="3.5,7 12,11.5 20.5,7" />
+      <line x1="12" y1="11.5" x2="12" y2="21.5" />
+      <line x1="7.75" y1="4.75" x2="16.25" y2="9.25" />
+    </svg>
+  );
+}
+
+// ═══ Book Icon SVG (ロアブック) ═══
+function BookIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 4.5H8a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2.5z" />
+      <path d="M21.5 4.5H16a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h6.5z" />
+    </svg>
+  );
+}
+
+// ═══ Coin Icon SVG (キャッシュ読取) ═══
+function CoinIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8.5,7.5 12,12 15.5,7.5" />
+      <line x1="12" y1="12" x2="12" y2="17" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+    </svg>
+  );
+}
+
+// ═══ Clock Icon SVG (送信時刻) ═══
+function ClockIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="12,7 12,12 15.5,14" />
+    </svg>
+  );
+}
+
+// ═══ Trash Icon SVG (削除確認) ═══
+function TrashIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="3.5" y1="6" x2="20.5" y2="6" />
+      <path d="M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6" />
+      <path d="M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6" />
+      <line x1="10" y1="10.5" x2="10" y2="16.5" />
+      <line x1="14" y1="10.5" x2="14" y2="16.5" />
+    </svg>
+  );
+}
+
+// ═══ Brain Icon SVG (メモリー) ═══
+function BrainIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 5.5a3 3 0 0 0-5.5-1.6A3 3 0 0 0 4.3 8.2a3.3 3.3 0 0 0 .4 5.7A3.3 3.3 0 0 0 8 19.3a3 3 0 0 0 4 .7z" />
+      <path d="M12 5.5a3 3 0 0 1 5.5-1.6 3 3 0 0 1 2.2 4.3 3.3 3.3 0 0 1-.4 5.7 3.3 3.3 0 0 1-3.3 5.4 3 3 0 0 1-4 .7z" />
+      <path d="M4.7 13.9A3.5 3.5 0 0 1 8.5 11.5" />
+      <path d="M19.3 13.9a3.5 3.5 0 0 0-3.8-2.4" />
+      <path d="M6.5 3.9A3 3 0 0 0 9 8" />
+      <path d="M17.5 3.9A3 3 0 0 1 15 8" />
+    </svg>
+  );
+}
+
+// ═══ Scroll Icon SVG (プロンプト) ═══
+function ScrollIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18.5 16.5V5A2 2 0 0 0 16.5 3H5" />
+      <path d="M5 3a2 2 0 0 0-2 2v2h3.5" />
+      <path d="M8.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-1.5a1 1 0 0 0-1-1H11.5a1 1 0 0 0-1 1v1a2 2 0 0 1-4 0V5A2 2 0 0 0 5 3" />
+      <line x1="10" y1="8" x2="15" y2="8" />
+      <line x1="10" y1="12" x2="15" y2="12" />
+    </svg>
+  );
+}
+
+// ═══ Save Icon SVG (画像保存) ═══
+function SaveIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+      <polyline points="8,10 12,14 16,10" />
+      <line x1="12" y1="3" x2="12" y2="14" />
+    </svg>
+  );
+}
+
+// ═══ Alert Icon SVG (警告) ═══
+function AlertIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.3 4.2L2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z" />
+      <line x1="12" y1="9.5" x2="12" y2="13.5" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+// ═══ Chart Icon SVG (統計) ═══
+function ChartIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="6" y1="20" x2="6" y2="13" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="18" y1="20" x2="18" y2="9" />
+    </svg>
+  );
+}
+
+// ═══ Flask Icon SVG (実験スレ) ═══
+function FlaskIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="8.5" y1="3" x2="15.5" y2="3" />
+      <path d="M10 3v6.5L4.4 18.6A1.6 1.6 0 0 0 5.8 21h12.4a1.6 1.6 0 0 0 1.4-2.4L14 9.5V3" />
+      <line x1="6.8" y1="15" x2="17.2" y2="15" />
+    </svg>
+  );
+}
+
+// ═══ Cloud Icon SVG (部屋) ═══
+function CloudIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d={CLOUD_PATH} />
+    </svg>
+  );
+}
+
 // ═══ Thinking → Google翻訳 ═══
 // 基本は navigator.share で原文を共有シートに渡す（Google翻訳アプリはURLのtext=を読まないため）。
 // navigator.share が無い環境ではURL方式にフォールバック。URLが長すぎると切れるので、
@@ -1420,7 +1642,7 @@ function ThinkingBlock({ thinking, thinkingRequested, theme, streaming }) {
         color: isEmpty ? "#eab308" : t.accentLight,
         fontFamily: FONT, transition: "all 0.2s", userSelect: "none",
       }}>
-        <span style={{ display:"inline-flex",alignItems:"center" }}>{isEmpty ? "🌱" : <BubbleIcon color={t.accentLight} size={13} />}</span>
+        <span style={{ display:"inline-flex",alignItems:"center" }}>{isEmpty ? <LeafIcon color="#eab308" size={13} /> : <BubbleIcon color={t.accentLight} size={13} />}</span>
         <span style={{ fontWeight: 500 }}>{isEmpty ? "ECO — 思考スキップ" : "Thinking"}</span>
         <span style={{ transform: open ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.25s", fontSize: "9px" }}>▼</span>
       </div>
@@ -1430,7 +1652,8 @@ function ThinkingBlock({ thinking, thinkingRequested, theme, streaming }) {
           background: "transparent", border: `1px solid ${t.thinkingBorder}`,
           color: t.accentLight, fontSize: "11px", fontFamily: FONT,
           cursor: "pointer", transition: "all 0.2s", whiteSpace: "nowrap",
-        }}>{!canShare && chunks.length > 1 ? `🌐 翻訳 ${idx + 1}/${chunks.length}` : "🌐 翻訳"}</button>
+          display: "inline-flex", alignItems: "center", gap: "4px",
+        }}><GlobeIcon color={t.accentLight} size={12} />{!canShare && chunks.length > 1 ? `翻訳 ${idx + 1}/${chunks.length}` : "翻訳"}</button>
       )}
       </div>
       {open && (
@@ -1465,7 +1688,7 @@ function GeneratedImagesBlock({ images, theme, onExpand, showLabel }) {
           fontSize: "12px", color: t.accentLight, fontFamily: FONT,
           marginBottom: "6px", userSelect: "none",
         }}>
-          <span>🎨</span><span style={{ fontWeight: 500 }}>制作</span>
+          <PaletteIcon color={t.accentLight} size={13} /><span style={{ fontWeight: 500 }}>制作</span>
         </div>
       )}
       <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
@@ -1517,8 +1740,9 @@ function ImagePromptPanel({ img, theme, open, onToggle }) {
         padding:"6px 14px", borderRadius:"14px", cursor:"pointer",
         background:"rgba(0,0,0,0.5)", border:`1px solid ${t.thinkingBorder}`,
         color:t.accentLight, fontSize:"11px", fontFamily:FONT,
+        display:"inline-flex", alignItems:"center", gap:"5px",
       }}>
-        📜 {open ? "プロンプトを閉じる" : "プロンプトを見る"}
+        <ScrollIcon color={t.accentLight} size={12} />{open ? "プロンプトを閉じる" : "プロンプトを見る"}
       </button>
       {open && (
         <div style={{
@@ -1538,7 +1762,8 @@ function ImagePromptPanel({ img, theme, open, onToggle }) {
                   padding:"5px 12px", borderRadius:"10px", cursor:"pointer",
                   background:t.thinkingBg, border:`1px solid ${t.thinkingBorder}`,
                   color:t.accentLight, fontSize:"11px", fontFamily:FONT,
-                }}>{copied ? "✓ コピーしました" : "コピー"}</button>
+                  display:"inline-flex", alignItems:"center", gap:"4px",
+                }}>{copied ? <><CheckIcon color={t.accentLight} size={11} />コピーしました</> : "コピー"}</button>
               </div>
             </>
           ) : (
@@ -1639,7 +1864,7 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
           <div onClick={e => e.stopPropagation()} style={{ display:"flex", flexDirection:"column", alignItems:"center", maxWidth:"92vw", maxHeight:"94vh" }}>
             <div style={{ position:"relative" }}>
               <img src={expandedImg.fullBase64 ? "data:image/png;base64," + expandedImg.fullBase64 : (expandedImg.preview || expandedImg.url)} style={{ maxWidth:"92vw", maxHeight: showImgPrompt ? "50vh" : "80vh", borderRadius:"16px", display:"block" }} />
-              <button onClick={() => saveGeneratedImage(expandedImg)} title="保存" style={{ position:"absolute", bottom:"12px", right:"12px", width:"40px", height:"40px", borderRadius:"50%", border:"none", background:"rgba(0,0,0,0.6)", cursor:"pointer", fontSize:"18px", display:"flex", alignItems:"center", justifyContent:"center" }}>💾</button>
+              <button onClick={() => saveGeneratedImage(expandedImg)} title="保存" style={{ position:"absolute", bottom:"12px", right:"12px", width:"40px", height:"40px", borderRadius:"50%", border:"none", background:"rgba(0,0,0,0.6)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}><SaveIcon color="#fff" size={20} /></button>
             </div>
             <ImagePromptPanel img={expandedImg} theme={t} open={showImgPrompt} onToggle={() => setShowImgPrompt(v => !v)} />
           </div>
@@ -1724,23 +1949,24 @@ function MessageBubble({ msg, theme, charAvatar, onEdit, isLastAssistant, onRege
             padding: "1px 6px", borderRadius: "6px",
             background: msg.modelRequested !== msg.modelActual ? "rgba(248,113,113,0.12)" : "rgba(255,255,255,0.04)",
             color: msg.modelRequested !== msg.modelActual ? "#f87171" : "#52525b", fontSize: "8px",
-          }}>{msg.modelActual.replace("claude-", "")}{msg.modelRequested !== msg.modelActual && " ⚠️"}</span>
+            display: "inline-flex", alignItems: "center", gap: "3px",
+          }}>{msg.modelActual.replace("claude-", "")}{msg.modelRequested !== msg.modelActual && <AlertIcon color="#f87171" size={9} />}</span>
         )}
         {!isUser && msg.usage && (() => {
           const u = msg.usage;
           return (
-            <span onClick={() => setShowUsageDetail(!showUsageDetail)} style={{ fontSize:"8px", cursor:"pointer", color: u.cacheRead > 0 ? "#4ade80" : u.cacheCreate > 0 ? "#facc15" : "#52525b" }}>
-              {!showUsageDetail && u.cacheRead > 0 && ("💰" + Math.round(u.cacheRead/1000) + "k cached")}
-              {!showUsageDetail && u.cacheRead === 0 && u.cacheCreate > 0 && ("📝" + Math.round(u.cacheCreate/1000) + "k 書込")}
+            <span onClick={() => setShowUsageDetail(!showUsageDetail)} style={{ fontSize:"8px", cursor:"pointer", display:"inline-flex", alignItems:"center", gap:"2px", color: u.cacheRead > 0 ? "#4ade80" : u.cacheCreate > 0 ? "#facc15" : "#52525b" }}>
+              {!showUsageDetail && u.cacheRead > 0 && <><CoinIcon color="#4ade80" size={9} />{Math.round(u.cacheRead/1000) + "k cached"}</>}
+              {!showUsageDetail && u.cacheRead === 0 && u.cacheCreate > 0 && <><FileTextIcon color="#facc15" size={9} />{Math.round(u.cacheCreate/1000) + "k 書込"}</>}
               {!showUsageDetail && u.cacheRead === 0 && u.cacheCreate === 0 && ("in:" + Math.round(u.input/1000) + "k")}
-              {showUsageDetail && ("in:" + u.input + " out:" + u.output + " 📝w:" + u.cacheCreate + (u.cacheCreate1h ? "(1h:" + u.cacheCreate1h + ")" : "") + " 💰r:" + u.cacheRead + (msg.cacheTtl === "1h" ? " ⏱1h" : "") + (u.raw ? " | raw:" + u.raw : ""))}
+              {showUsageDetail && ("in:" + u.input + " out:" + u.output + " w:" + u.cacheCreate + (u.cacheCreate1h ? "(1h:" + u.cacheCreate1h + ")" : "") + " r:" + u.cacheRead + (msg.cacheTtl === "1h" ? " 1h" : "") + (u.raw ? " | raw:" + u.raw : ""))}
             </span>
           );
         })()}
       </div>
       {isUser && msg.triggeredLore?.length > 0 && (
-        <div title="この発言に添付されたロアブックのエントリ" style={{ marginTop:"3px", paddingRight:"12px", maxWidth:"82%", textAlign:"right", fontSize:"9px", color:`${t.accent}99`, fontFamily:FONT, wordBreak:"break-word" }}>
-          📖 {msg.triggeredLore.join("・")}
+        <div title="この発言に添付されたロアブックのエントリ" style={{ marginTop:"3px", paddingRight:"12px", maxWidth:"82%", textAlign:"right", fontSize:"9px", color:`${t.accent}99`, fontFamily:FONT, wordBreak:"break-word", display:"flex", justifyContent:"flex-end", alignItems:"flex-start", gap:"3px" }}>
+          <span style={{ display:"flex", marginTop:"1px", flexShrink:0 }}><BookIcon color={`${t.accent}99`} size={10} /></span><span>{msg.triggeredLore.join("・")}</span>
         </div>
       )}
     </div>
@@ -1816,7 +2042,7 @@ function PendingMemoryModal({ items, characters, rooms, theme, onSave, onDelete,
       <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${t.accent}10`,animation:"fadeIn 0.2s ease-out" }}>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px" }}>
           <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
-            <span style={{ fontSize:"18px" }}>🔔</span>
+            <BellIcon color={t.accent} size={18} />
             <span style={{ fontSize:"15px",fontWeight:700,color:t.accent,fontFamily:FONT }}>保留中のメモリー</span>
             <span style={{ fontSize:"11px",color:"#71717a",fontFamily:FONT }}>{items.length}件</span>
           </div>
@@ -1934,13 +2160,13 @@ function CharSwitcher({ chars, activeId, onSwitch, theme, onBackLongPressStart, 
 
 // ═══ Delete Confirm Dialog ═══
 const snip = s => (s || "").length > 20 ? s.slice(0, 20) + "…" : (s || "");
-function DeleteConfirmDialog({ onConfirm, onCancel, theme, message, icon = "🗑️", title = "本当に削除する？", confirmLabel = "削除する", kind = "deleteConfirm" }) {
+function DeleteConfirmDialog({ onConfirm, onCancel, theme, message, icon, title = "本当に削除する？", confirmLabel = "削除する", kind = "deleteConfirm" }) {
   const t = theme || THEMES.nagi;
   useOverlayHistory(true, onCancel, kind);
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
       <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5), 0 0 30px ${t.accent}10`,textAlign:"center" }}>
-        <div style={{ fontSize:"32px",marginBottom:"14px" }}>{icon}</div>
+        <div style={{ display:"flex",justifyContent:"center",marginBottom:"14px" }}>{icon || <TrashIcon color={t.accentLight} size={32} />}</div>
         <div style={{ fontSize:"15px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,marginBottom:"8px" }}>{title}</div>
         <div style={{ fontSize:"12px",color:"#71717a",fontFamily:FONT,marginBottom:"22px",lineHeight:"1.6" }}>{message || "この会話は元に戻せないよ"}</div>
         <div style={{ display:"flex",gap:"10px" }}>
@@ -1955,7 +2181,7 @@ function DeleteConfirmDialog({ onConfirm, onCancel, theme, message, icon = "🗑
 // 未保存の変更があるまま閉じようとした時の確認
 function DiscardConfirmDialog({ onConfirm, onCancel, theme }) {
   return <DeleteConfirmDialog theme={theme} onConfirm={onConfirm} onCancel={onCancel} kind="discardConfirm"
-    icon="📝" title="変更を破棄する？" message="保存していない変更は消えちゃうよ" confirmLabel="破棄する" />;
+    icon={<FileTextIcon color={(theme || THEMES.nagi).accentLight} size={32} />} title="変更を破棄する？" message="保存していない変更は消えちゃうよ" confirmLabel="破棄する" />;
 }
 
 // ═══ Shared Styles ═══
@@ -2051,7 +2277,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
                     cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.3:1,
                     transition:"all 0.2s",textAlign:"center",flex:"1 1 auto",minWidth:"60px",
                   }}>
-                    <div style={{ fontSize:"14px" }}>{e.icon}</div>
+                    <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"20px" }}><e.icon color={e.color} size={16} /></div>
                     <div style={{ fontSize:"11px",fontWeight:600,color:s.effort===e.v?e.color:"#71717a",fontFamily:FONT }}>{e.label}</div>
                     <div style={{ fontSize:"9px",color:"#52525b",fontFamily:FONT }}>{e.desc}</div>
                   </div>
@@ -2090,7 +2316,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
           <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.timestampEnabled?t.userGradient:"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
             <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left:s.timestampEnabled?"20px":"2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
           </div>
-          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>🕐 メッセージに送信時刻を付ける{s.timestampEnabled?" — ON":""}</span>
+          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT,display:"flex",alignItems:"center",gap:"6px" }}><ClockIcon color="#d4d4d8" size={14} />メッセージに送信時刻を付ける{s.timestampEnabled?" — ON":""}</span>
         </div>
         <div style={{ fontSize:"10px",color:"#71717a",fontFamily:FONT,marginTop:"6px",paddingLeft:"4px",lineHeight:1.5 }}>ONにすると、キャラが各メッセージの送信時刻を認識します（画面には表示されません）</div>
         <label style={{...labelStyle,marginTop:"18px"}}>Web検索</label>
@@ -2118,7 +2344,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
                   background:selected?`${im.color}0a`:"transparent",
                   cursor:"pointer",transition:"all 0.2s",textAlign:"center",
                 }}>
-                  <div style={{ fontSize:"14px" }}>{im.icon}</div>
+                  <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"20px" }}><im.icon color={im.color} size={16} /></div>
                   <div style={{ fontSize:"11px",fontWeight:600,color:selected?im.color:"#71717a",fontFamily:FONT }}>{im.label}</div>
                   <div style={{ fontSize:"9px",color:"#52525b",fontFamily:FONT }}>{im.desc}</div>
                 </div>
@@ -2128,8 +2354,8 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
         )}
         <label style={{...labelStyle,marginTop:"22px"}}>データ管理</label>
         <div style={{ display:"flex",gap:"8px" }}>
-          <button onClick={onBackup} style={{ flex:1,padding:"11px",borderRadius:"14px",border:`1px solid ${t.accent}25`,background:`${t.accent}08`,color:t.accentLight,fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:500 }}>📦 バックアップ</button>
-          <button onClick={() => restoreRef.current?.click()} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)",color:"#a1a1aa",fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:500 }}>📥 復元</button>
+          <button onClick={onBackup} style={{ flex:1,padding:"11px",borderRadius:"14px",border:`1px solid ${t.accent}25`,background:`${t.accent}08`,color:t.accentLight,fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:"6px" }}><BoxIcon color={t.accentLight} size={14} />バックアップ</button>
+          <button onClick={() => restoreRef.current?.click()} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)",color:"#a1a1aa",fontSize:"12px",cursor:"pointer",fontFamily:FONT,fontWeight:500,display:"flex",alignItems:"center",justifyContent:"center",gap:"6px" }}><InboxIcon color="#a1a1aa" size={14} />復元</button>
           <input ref={restoreRef} type="file" accept=".json" onChange={e => { if (e.target.files?.[0]) onRestore(e.target.files[0]); e.target.value=""; }} style={{ display:"none" }} />
         </div>
         <div style={{ fontSize:"9px",color:"#3f3f46",marginTop:"6px",fontFamily:FONT }}>全会話・設定・記憶をJSONで書き出し／読み込み</div>
@@ -2179,7 +2405,7 @@ function LoreEntryModal({ entry, onSave, onClose, theme }) {
     <div style={{ ...overlayStyle, zIndex:110 }}>
       <div style={{ background:"#1a1a22",borderRadius:"24px",padding:"26px",width:"min(440px, 92vw)",border:`1px solid ${ac}15`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 40px ${ac}08`,maxHeight:"88vh",overflowY:"auto" }}>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"20px" }}>
-          <h2 style={h2Style}>📖 {entry ? "エントリを編集" : "新しいエントリ"}</h2>
+          <h2 style={{...h2Style,display:"flex",alignItems:"center",gap:"6px"}}><BookIcon color={ac} size={17} />{entry ? "エントリを編集" : "新しいエントリ"}</h2>
           <button onClick={requestClose} style={closeBtnStyle}
             onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
             <XIcon color={`${ac}66`} size={18} />
@@ -2283,7 +2509,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
       <div style={{ padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${t.accent}15`,background:"rgba(0,0,0,0.3)" }}>
         <div style={{ display:"flex",alignItems:"center",gap:"10px" }}>
           {charAvatar && <Avatar src={charAvatar} size={32} border={`2px solid ${t.accent}40`} />}
-          <div><h2 style={{...h2Style,marginBottom:"2px"}}>📝 {charName}</h2><div style={{ fontSize:"11px",color:"#52525b",fontFamily:FONT }}>{hasLore ? "システムプロンプト・ロアブック編集" : "システムプロンプト編集"}</div></div>
+          <div><h2 style={{...h2Style,marginBottom:"2px",display:"flex",alignItems:"center",gap:"6px"}}><FileTextIcon color={ac} size={16} />{charName}</h2><div style={{ fontSize:"11px",color:"#52525b",fontFamily:FONT }}>{hasLore ? "システムプロンプト・ロアブック編集" : "システムプロンプト編集"}</div></div>
         </div>
         <button onClick={requestClose} style={closeBtnStyle}
           onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
@@ -2295,8 +2521,8 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
         <div style={{ fontSize:"10px",color:"#3f3f46",marginTop:"6px",textAlign:"right",fontFamily:FONT }}>{t2.length.toLocaleString()} 文字</div>
         {hasLore && (
           <div style={{ marginTop:"22px",paddingBottom:"8px" }}>
-            <div style={{ display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:"4px" }}>
-              <h3 style={{ margin:0,fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700 }}>📖 ロアブック</h3>
+            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"4px" }}>
+              <h3 style={{ margin:0,fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,display:"flex",alignItems:"center",gap:"6px" }}><BookIcon color={ac} size={15} />ロアブック</h3>
               <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{lore.length}件</span>
             </div>
             <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>直近の会話にキーワードが出たとき、本文が自動で添付されます（システムプロンプトには入りません）</div>
@@ -2332,7 +2558,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
         )}
         {hasLore && (
           <div style={{ marginTop:"22px",paddingBottom:"8px" }}>
-            <h3 style={{ margin:"0 0 4px",fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700 }}>👤 プロフィール</h3>
+            <h3 style={{ margin:"0 0 4px",fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,display:"flex",alignItems:"center",gap:"6px" }}><PersonIcon color={ac} size={15} />プロフィール</h3>
             <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>このキャラに渡すユーザープロフィールを選べます</div>
             <div style={{ display:"flex",gap:"6px" }}>
               {PROFILE_MODES.map(m => {
@@ -2354,8 +2580,8 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
         )}
         {hasLore && (
           <div style={{ marginTop:"22px",paddingBottom:"8px" }}>
-            <div style={{ display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:"4px" }}>
-              <h3 style={{ margin:0,fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700 }}>🧠 メモリー</h3>
+            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"4px" }}>
+              <h3 style={{ margin:0,fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,display:"flex",alignItems:"center",gap:"6px" }}><BrainIcon color={ac} size={15} />メモリー</h3>
               <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{mems.length + (hasRooms && mScope === "room" ? roomMemCount : 0)}件</span>
             </div>
             <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>キャラが会話中に「覚えておきたい」と申請し、承認した内容がここに貯まります。手動で追加することもできます。追加・ON/OFF・編集・削除は次の新しいスレッドから反映されます</div>
@@ -2385,8 +2611,8 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
             <div style={{ display:"flex",flexDirection:"column",gap:"8px",opacity:memOn ? 1 : 0.55,transition:"opacity 0.2s" }}>
               {(() => {
                 const groupTitle = (label, count) => (
-                  <div style={{ display:"flex",alignItems:"baseline",justifyContent:"space-between",margin:"6px 2px 0" }}>
-                    <span style={{ fontSize:"11.5px",fontWeight:700,color:acl,fontFamily:FONT }}>{label}</span>
+                  <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",margin:"6px 2px 0" }}>
+                    <span style={{ fontSize:"11.5px",fontWeight:700,color:acl,fontFamily:FONT,display:"flex",alignItems:"center",gap:"5px" }}>{label}</span>
                     <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{count}件</span>
                   </div>
                 );
@@ -2447,12 +2673,12 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                 }
                 return (
                   <>
-                    {groupTitle("🌐 共通（全部屋）", mems.length)}
+                    {groupTitle(<><GlobeIcon color={acl} size={12} />共通（全部屋）</>, mems.length)}
                     {mems.length === 0 ? empty("共通の記憶はありません") : mems.map(m => renderItem(m, ""))}
                     {renderAdd("")}
                     {(rooms || []).map(r => (
                       <React.Fragment key={r.id}>
-                        {groupTitle("☁️ " + r.name, bucketItems(r.id).length)}
+                        {groupTitle(<><CloudIcon color={acl} size={12} />{r.name}</>, bucketItems(r.id).length)}
                         {bucketItems(r.id).length === 0 ? empty("この部屋だけの記憶はありません") : bucketItems(r.id).map(m => renderItem(m, r.id))}
                         {renderAdd(r.id)}
                       </React.Fragment>
@@ -2594,7 +2820,7 @@ function ThreadInfoModal({ conv, theme, onClose }) {
     <div style={overlayStyle} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"22px",width:"min(360px, 90vw)",border:`1px solid ${t.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${t.accent}10`,animation:"fadeIn 0.2s ease-out" }}>
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px" }}>
-          <span style={{ fontSize:"15px",fontWeight:700,color:t.accent,fontFamily:FONT }}>📊 このスレについて</span>
+          <span style={{ fontSize:"15px",fontWeight:700,color:t.accent,fontFamily:FONT,display:"flex",alignItems:"center",gap:"6px" }}><ChartIcon color={t.accent} size={16} />このスレについて</span>
           <button onClick={onClose} style={closeBtnStyle}
             onMouseEnter={e => e.currentTarget.querySelector('svg').style.stroke = t.accent} onMouseLeave={e => e.currentTarget.querySelector('svg').style.stroke = `${t.accent}66`}>
             <XIcon color={`${t.accent}66`} size={18} />
@@ -2619,7 +2845,7 @@ function StatusBadges({ model, effort, thinkingEnabled, webSearch }) {
   return (
     <div style={{ display:"flex",gap:"4px",flexWrap:"wrap" }}>
       <span style={bs(m.color)}>{m.label}</span>
-      {thinkingEnabled && <span style={bs(e.color)}>{e.icon}{e.label}</span>}
+      {thinkingEnabled && <span style={bs(e.color)}><e.icon color={e.color} size={10} />{e.label}</span>}
       {webSearch && <span style={bs("#34d399")}><SearchIcon color="#34d399" size={11} strokeWidth={3} /></span>}
     </div>
   );
@@ -4100,7 +4326,7 @@ function NagiChat() {
       {restoreConfirm && (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
           <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5)`,textAlign:"center" }}>
-            <div style={{ fontSize:"32px",marginBottom:"14px" }}>📥</div>
+            <div style={{ display:"flex",justifyContent:"center",marginBottom:"14px" }}><InboxIcon color={theme.accentLight} size={32} /></div>
             <div style={{ fontSize:"15px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,marginBottom:"8px" }}>データを復元する？</div>
             <div style={{ fontSize:"12px",color:"#71717a",fontFamily:FONT,marginBottom:"22px",lineHeight:"1.6" }}>現在のデータは上書きされます</div>
             <div style={{ display:"flex",gap:"10px" }}>
@@ -4137,13 +4363,13 @@ function NagiChat() {
             <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${theme.accent}10` }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px" }}>
                 <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
-                  <span style={{ fontSize:"18px" }}>🧠</span>
+                  <BrainIcon color={theme.accent} size={18} />
                   <span style={{ fontSize:"15px",fontWeight:700,color:theme.accent,fontFamily:FONT }}>前回までの記憶</span>
                 </div>
                 <div style={{ display:"flex",alignItems:"center",gap:"6px" }}>
                   {!editingMemory && (
                     <button onClick={() => { setMemoryDraft(mem || ""); setEditingMemory(true); }} style={{ background:"none",border:`1px solid ${theme.accent}30`,borderRadius:"10px",color:theme.accent,fontSize:"12px",cursor:"pointer",padding:"4px 10px",fontFamily:FONT,transition:"all 0.2s",display:"flex",alignItems:"center",gap:"5px" }}>
-                      {mem ? <><PenIcon color={theme.accent} size={12} /> 編集</> : "✍️ 書き込む"}
+                      {mem ? <><PenIcon color={theme.accent} size={12} /> 編集</> : <><PenIcon color={theme.accent} size={12} /> 書き込む</>}
                     </button>
                   )}
                   <button onClick={requestCloseMemory} style={closeBtnStyle}
@@ -4161,8 +4387,8 @@ function NagiChat() {
                   <div style={{ width:"20px",height:"20px",borderRadius:"50%",background:"#fff",position:"absolute",top:"2px",left: activeConv?.skipMemory ? "20px" : "2px",transition:"left 0.3s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }}/>
                 </div>
                 <div style={{ flex:1 }}>
-                  <div style={{ fontSize:"13px",color: activeConv?.skipMemory ? "#facc15" : "#d4d4d8",fontFamily:FONT,fontWeight:600 }}>
-                    🧪 {activeConv?.skipMemory ? "実験スレ — 次に引き継がない" : "通常スレ — 次に引き継ぐ"}
+                  <div style={{ fontSize:"13px",color: activeConv?.skipMemory ? "#facc15" : "#d4d4d8",fontFamily:FONT,fontWeight:600,display:"flex",alignItems:"center",gap:"5px" }}>
+                    <FlaskIcon color={activeConv?.skipMemory ? "#facc15" : "#d4d4d8"} size={13} />{activeConv?.skipMemory ? "実験スレ — 次に引き継がない" : "通常スレ — 次に引き継ぐ"}
                   </div>
                   <div style={{ fontSize:"10px",color:"#71717a",fontFamily:FONT,marginTop:"2px",lineHeight:"1.5" }}>
                     ONで、このスレは要約されず、ひとつ前の記憶がそのまま次へ進みます
@@ -4220,7 +4446,7 @@ function NagiChat() {
         <div ref={headerBtnsRef} style={{ display:"flex",gap:"5px",flexShrink:0 }}>
           {pendingMemories.length > 0 && (
             <button onClick={() => setShowPendingBox(true)} style={{...headerBtnStyle, gap:"3px", padding:"7px 8px", background:`${theme.accent}14`, border:`1px solid ${theme.accent}35`, animation:"fadeIn 0.25s ease-out"}} title="保留中のメモリー">
-              <span style={{ fontSize:"13px",lineHeight:1 }}>🔔</span>
+              <BellIcon color={theme.accentLight} size={13} />
               <span style={{ fontSize:"11px",fontWeight:700,color:theme.accentLight,fontFamily:FONT,lineHeight:1 }}>{pendingMemories.length}</span>
             </button>
           )}
@@ -4306,7 +4532,7 @@ function NagiChat() {
       <div style={{ padding:"8px 12px max(16px, env(safe-area-inset-bottom))",borderTop:`1px solid ${theme.accent}10`,background:theme.inputBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
         {editingMsg && (
           <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",maxWidth:"720px",margin:"0 auto 6px",padding:"6px 14px",borderRadius:"12px",background:`${theme.accent}12`,border:`1px solid ${theme.accent}25` }}>
-            <span style={{ fontSize:"13px",color:theme.accent }}>✏️ 編集中…</span>
+            <span style={{ fontSize:"13px",color:theme.accent,display:"flex",alignItems:"center",gap:"5px" }}><PenIcon color={theme.accent} size={13} />編集中…</span>
             <button onClick={cancelEdit} style={{ fontSize:"12px",color:"#a1a1aa",background:"none",border:"none",cursor:"pointer",padding:"2px 8px",borderRadius:"8px",transition:"all 0.2s" }}
               onMouseEnter={e => { e.target.style.color = "#e4e4e7"; e.target.style.background = "rgba(255,255,255,0.06)"; }}
               onMouseLeave={e => { e.target.style.color = "#a1a1aa"; e.target.style.background = "none"; }}
