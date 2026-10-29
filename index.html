@@ -3148,7 +3148,13 @@ function NagiChat() {
 
     // ── 通常: 直近スレを要約して引き継ぐ ──
     const charType = activeChar.charType || (activeCharId === "plain" ? "plain" : "lover");
-    const { text: memory, usage: memoryUsage } = await generateInheritedMemory([mostRecent], charType, settings.apiKey);
+    let result;
+    try {
+      result = await generateInheritedMemory([mostRecent], charType, settings.apiKey);
+    } catch (e) {
+      result = { text:"", usage:null, error: { message: e?.message || String(e) } };
+    }
+    const { text: memory, usage: memoryUsage, error: memoryError } = result;
     if (memoryUsage) {
       // 引き継ぎHaikuのコストは新しいスレに記録（スレ累計・月間集計に入る）
       setConversations(prev => prev.map(c => c.id === newId ? { ...c, summaryUsage: addSummaryUsage(c.summaryUsage, MEMORY_INHERIT_MODEL, memoryUsage, "memory") } : c));
@@ -3156,6 +3162,9 @@ function NagiChat() {
     if (memory) {
       setConversations(prev => prev.map(c => c.id === newId ? { ...c, inheritedMemory: memory } : c));
       console.log("[MEMORY] Inherited memory saved to new thread:", memory.slice(0, 100) + "...");
+    } else if (memoryError) {
+      console.error("[MEMORY] Failed to inherit memory from thread " + mostRecent.id + ":", memoryError);
+      showMemoryToast("記憶の引き継ぎに失敗したよ");
     }
   }
 
@@ -3373,7 +3382,7 @@ function NagiChat() {
     return "fallback";
   }
 
-  // ── 要約生成（共通ヘルパー）── { text, usage } を返す（失敗時 text:""）
+  // ── 要約生成（共通ヘルパー）── { text, usage } を返す（失敗時 text:"" と error:{ status?, stopReason?, message }）
   // max_tokensで切れたら枠を1.5倍（上限4000）にして1回だけ再実行する。usageは両方を合算して返す
   async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens, model) {
     model = model || MEMORY_INHERIT_MODEL;
@@ -3386,15 +3395,30 @@ function NagiChat() {
       };
       // Haiku 5.5はthinkingが既定でON（max_tokensを食う）。要約には不要なので切る（effort既定mediumなのでdisabled可）
       if (model === "claude-haiku-5-5") reqBody.thinking = { type:"disabled" };
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
-        body: JSON.stringify(reqBody),
-      });
-      if (!res.ok) { console.warn("[HAIKU] Failed:", res.status); return null; }
+      let res;
+      try {
+        res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type":"application/json", "x-api-key":apiKey, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+          body: JSON.stringify(reqBody),
+        });
+      } catch (e) {
+        console.error("[HAIKU] Request error:", e);
+        return { error: { message: e?.message || String(e) } };
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error("[HAIKU] Failed:", res.status, model, body.slice(0, 500));
+        return { error: { status: res.status, message: body.slice(0, 500) } };
+      }
       const data = await res.json();
       const textBlock = (data.content || []).find(b => b.type === "text");
       return { text: textBlock?.text || "", usage: data.usage || null, stopReason: data.stop_reason };
+    };
+    // 200でも本文が空（refusal等）なら失敗として扱う。usageは課金されているので残す
+    const emptyError = (r) => {
+      console.error("[HAIKU] Empty summary:", model, "stop_reason=" + r.stopReason);
+      return { text:"", usage: r.usage, error: { stopReason: r.stopReason, message: "empty response" } };
     };
     const sumUsage = (a, b) => {
       if (!a || !b) return a || b || null;
@@ -3404,19 +3428,21 @@ function NagiChat() {
 
     const limit = maxTokens || 1024;
     const first = await request(limit);
-    if (!first) return { text:"", usage:null };
-    if (first.stopReason !== "max_tokens") return { text: first.text, usage: first.usage };
+    if (first.error) return { text:"", usage:null, error: first.error };
+    if (first.stopReason !== "max_tokens") return first.text ? { text: first.text, usage: first.usage } : emptyError(first);
 
     const retryLimit = Math.min(Math.round(limit * 1.5), 4000);
     console.log("[HAIKU] Hit max_tokens (" + limit + "), retrying with " + retryLimit);
     const retry = await request(retryLimit);
     // 再実行が失敗したら初回の結果を使う（コストは初回分だけ）
-    if (!retry) {
+    if (retry.error) {
       console.warn("[HAIKU] summary truncated");
-      return { text: first.text, usage: first.usage };
+      return first.text ? { text: first.text, usage: first.usage } : emptyError(first);
     }
+    const total = sumUsage(first.usage, retry.usage);
+    if (!retry.text) return first.text ? { text: first.text, usage: total } : emptyError({ ...retry, usage: total });
     if (retry.stopReason === "max_tokens") console.warn("[HAIKU] summary truncated");
-    return { text: retry.text, usage: sumUsage(first.usage, retry.usage) };
+    return { text: retry.text, usage: total };
   }
 
   // ── ローリング要約の1章分を生成（スレ内圧縮）── { text, usage }
