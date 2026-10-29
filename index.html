@@ -765,6 +765,16 @@ function addSummaryUsage(prev, model, u, kind) {
     ...(u.cache_creation ? { cacheCreate5m: u.cache_creation.ephemeral_5m_input_tokens || 0, cacheCreate1h: u.cache_creation.ephemeral_1h_input_tokens || 0 } : {}),
   }];
 }
+// callHaikuSummaryのerrorを、トースト・記憶パネル用の短い理由にする
+function memoryErrorReason(err) {
+  if (!err) return "原因不明";
+  if (err.stopReason === "refusal") return "断られちゃった";
+  if (err.stopReason) return "空っぽで返ってきた";
+  if (err.status === 401 || err.status === 403) return "APIキーを確認してね";
+  if (err.status === 429 || err.status === 503 || err.status === 529) return "混んでた";
+  if (err.status) return "エラー" + err.status;
+  return "通信エラー";
+}
 // 記録1件の概算コスト
 function summaryUsageCost(e) {
   return { ...calcMessageCost({ usage: e, timestamp: e.at }, e.model), modelId: e.model };
@@ -2886,6 +2896,7 @@ function NagiChat() {
   const [showMemory, setShowMemory] = useState(false);
   const [editingMemory, setEditingMemory] = useState(false);
   const [memoryDraft, setMemoryDraft] = useState("");
+  const [retryingMemory, setRetryingMemory] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [attachHover, setAttachHover] = useState(false);
   const [paletteHover, setPaletteHover] = useState(false);
@@ -3147,24 +3158,50 @@ function NagiChat() {
     }
 
     // ── 通常: 直近スレを要約して引き継ぐ ──
+    await inheritMemoryInto(newId, mostRecent);
+  }
+
+  // 元スレを要約して、指定スレの引き継ぎ記憶にする。失敗したら理由をスレに残してトーストで知らせる
+  async function inheritMemoryInto(targetId, sourceConv) {
     const charType = activeChar.charType || (activeCharId === "plain" ? "plain" : "lover");
     let result;
     try {
-      result = await generateInheritedMemory([mostRecent], charType, settings.apiKey);
+      result = await generateInheritedMemory([sourceConv], charType, settings.apiKey);
     } catch (e) {
       result = { text:"", usage:null, error: { message: e?.message || String(e) } };
     }
     const { text: memory, usage: memoryUsage, error: memoryError } = result;
     if (memoryUsage) {
       // 引き継ぎHaikuのコストは新しいスレに記録（スレ累計・月間集計に入る）
-      setConversations(prev => prev.map(c => c.id === newId ? { ...c, summaryUsage: addSummaryUsage(c.summaryUsage, MEMORY_INHERIT_MODEL, memoryUsage, "memory") } : c));
+      setConversations(prev => prev.map(c => c.id === targetId ? { ...c, summaryUsage: addSummaryUsage(c.summaryUsage, MEMORY_INHERIT_MODEL, memoryUsage, "memory") } : c));
     }
     if (memory) {
-      setConversations(prev => prev.map(c => c.id === newId ? { ...c, inheritedMemory: memory } : c));
+      setConversations(prev => prev.map(c => {
+        if (c.id !== targetId) return c;
+        const { memoryInheritError, ...rest } = c;
+        return { ...rest, inheritedMemory: memory };
+      }));
       console.log("[MEMORY] Inherited memory saved to new thread:", memory.slice(0, 100) + "...");
-    } else if (memoryError) {
-      console.error("[MEMORY] Failed to inherit memory from thread " + mostRecent.id + ":", memoryError);
-      showMemoryToast("記憶の引き継ぎに失敗したよ");
+      return true;
+    }
+    if (memoryError) {
+      const reason = memoryErrorReason(memoryError);
+      console.error("[MEMORY] Failed to inherit memory from thread " + sourceConv.id + ":", memoryError);
+      setConversations(prev => prev.map(c => c.id === targetId ? { ...c, memoryInheritError: { reason, sourceId: sourceConv.id, at: Date.now() } } : c));
+      showMemoryToast("記憶の引き継ぎに失敗したよ（" + reason + "）");
+    }
+    return false;
+  }
+
+  async function retryInheritMemory() {
+    const conv = activeConv;
+    const source = conversations.find(c => c.id === conv?.memoryInheritError?.sourceId);
+    if (!conv || !source || retryingMemory) return;
+    setRetryingMemory(true);
+    try {
+      await inheritMemoryInto(conv.id, source); // 結果は記憶パネルに出る（トーストはパネルの裏に隠れるので出さない）
+    } finally {
+      setRetryingMemory(false);
     }
   }
 
@@ -4218,7 +4255,8 @@ function NagiChat() {
         const { inheritedMemory, memoryEdited, ...rest } = c;
         return { ...rest, updatedAt: Date.now() };
       }
-      return { ...c, inheritedMemory: text, memoryEdited: true, updatedAt: Date.now() };
+      const { memoryInheritError, ...rest } = c;
+      return { ...rest, inheritedMemory: text, memoryEdited: true, updatedAt: Date.now() };
     }));
     setEditingMemory(false);
   }
@@ -4446,6 +4484,21 @@ function NagiChat() {
               ) : (
                 <div style={{ flex:1,overflowY:"auto",padding:"16px",borderRadius:"16px",background:`${theme.accent}06`,border:`1px solid ${theme.accent}12`,fontSize:"13px",lineHeight:"2",color:"#d4d4d8",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
                   {mem || <span style={{ color:"#71717a" }}>このスレッドには引き継いだ記憶がありません。手動で書き込むこともできます</span>}
+                  {!mem && activeConv?.memoryInheritError && (() => {
+                    const canRetry = !!settings.apiKey && conversations.some(c => c.id === activeConv.memoryInheritError.sourceId);
+                    return (
+                      <div style={{ marginTop:"14px",padding:"12px",borderRadius:"12px",background:"rgba(248,113,113,0.06)",border:"1px solid rgba(248,113,113,0.2)",whiteSpace:"normal" }}>
+                        <div style={{ fontSize:"12px",color:"#fca5a5",lineHeight:"1.6" }}>前のスレからの引き継ぎに失敗しました（{activeConv.memoryInheritError.reason}・{new Date(activeConv.memoryInheritError.at).toLocaleTimeString("ja-JP", { hour:"2-digit", minute:"2-digit" })}）</div>
+                        {canRetry ? (
+                          <button onClick={retryInheritMemory} disabled={retryingMemory} style={{ marginTop:"10px",width:"100%",padding:"9px",borderRadius:"12px",border:`1px solid ${theme.accent}40`,background:`${theme.accent}12`,color:theme.accentLight,fontSize:"12px",fontWeight:600,fontFamily:FONT,cursor: retryingMemory ? "default" : "pointer",opacity: retryingMemory ? 0.6 : 1,display:"flex",alignItems:"center",justifyContent:"center",gap:"6px" }}>
+                            <BrainIcon color={theme.accentLight} size={13} />{retryingMemory ? "引き継ぎ中…" : "もう一回引き継ぐ"}
+                          </button>
+                        ) : (
+                          <div style={{ fontSize:"11px",color:"#71717a",marginTop:"6px",lineHeight:"1.6" }}>元のスレが見つからないので、やり直しはできません</div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
