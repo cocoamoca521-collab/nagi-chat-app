@@ -1066,6 +1066,7 @@ function RoomEditModal({ room, onSave, onClose }) {
   const [name, setName] = useState(room?.name || "");
   const [model, setModel] = useState(room?.model || "claude-opus-4-6");
   const [roomPrompt, setRoomPrompt] = useState(room?.roomPrompt || "");
+  const [useProfile, setUseProfile] = useState(room?.useProfile !== false); // 未定義＝ON（従来どおり）
   const ac = "#fb923c";
   const canSave = name.trim().length > 0;
   useOverlayHistory(true, onClose, "roomEdit");
@@ -1097,9 +1098,14 @@ function RoomEditModal({ room, onSave, onClose }) {
         <label style={{...labelStyle,marginTop:"18px"}}>部屋プロンプト（任意）</label>
         <textarea value={roomPrompt} onChange={e => setRoomPrompt(e.target.value)} placeholder="この部屋だけの追加指示。例：あなたはClaude Opus 4.6です／空欄のままでもOK" rows={4}
           style={{ width:"100%",padding:"11px 14px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"#e4e4e7",fontSize:"12.5px",fontFamily:FONT,outline:"none",resize:"none",boxSizing:"border-box",lineHeight:"1.7" }} />
+        <div onClick={() => setUseProfile(v => !v)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",marginTop:"18px" }}>
+          <LoreToggle on={useProfile} onChange={setUseProfile} color={ac} />
+          <span style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT }}>共通プロンプトを使う</span>
+        </div>
+        <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginTop:"6px",fontFamily:FONT }}>OFFにすると、この部屋では共通プロフィールが入りません（次の送信から反映）</div>
         <div style={{ display:"flex",gap:"10px",marginTop:"20px" }}>
           <button onClick={onClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
-          <button onClick={() => canSave && onSave({ name:name.trim(), model, roomPrompt })} disabled={!canSave}
+          <button onClick={() => canSave && onSave({ name:name.trim(), model, roomPrompt, useProfile })} disabled={!canSave}
             style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:canSave?"linear-gradient(135deg, #f97316, #fb923c)":"rgba(255,255,255,0.06)",color:canSave?"#fff":"#52525b",fontSize:"13px",cursor:canSave?"pointer":"default",fontWeight:600,fontFamily:FONT }}>保存</button>
         </div>
       </div>
@@ -1285,6 +1291,17 @@ function PersonIcon({ color, size }) {
     <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="8" r="3.6" />
       <path d="M4.5 20c0-4.1 3.4-6.5 7.5-6.5s7.5 2.4 7.5 6.5" />
+    </svg>
+  );
+}
+
+// 共通プロフィールを入れない部屋の印（人型に斜線）
+function PersonOffIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M4.5 20c0-4.1 3.4-6.5 7.5-6.5s7.5 2.4 7.5 6.5" />
+      <path d="M3.5 3.5l17 17" />
     </svg>
   );
 }
@@ -2492,6 +2509,11 @@ function resolveProfilePart(char, commonProfile) {
   if (char?.profileMode === "none") return "";
   if (char?.profileMode === "custom") return char.customProfile ? "\n\n" + char.customProfile : "";
   return "\n\n" + commonProfile; // common / 未設定: 従来通り
+}
+// 部屋の設定がキャラの設定より優先。useProfile === false の部屋だけプロフィールを外す（未定義・true は従来どおり）
+function resolveProfilePartForRoom(char, commonProfile, room) {
+  if (room?.useProfile === false) return "";
+  return resolveProfilePart(char, commonProfile);
 }
 
 function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose, theme, lorebook, profileMode, customProfile, memoryEnabled, memories, memoryScope, roomMemories, rooms }) {
@@ -3921,9 +3943,9 @@ function NagiChat() {
       const cc = cacheControl(cacheTtl);
       console.log("[CACHE DEBUG] cacheTtl=" + cacheTtl);
 
-      // ブロック1（安定）: キャラprompt + 部屋プロンプト + プロフィール（キャラ設定で 共通/専用/なし）+ メモリー（スナップショット）→ キャッシュ長持ち
+      // ブロック1（安定）: キャラprompt + 部屋プロンプト + プロフィール（部屋でOFFなら無し、それ以外はキャラ設定で 共通/専用/なし）+ メモリー（スナップショット）→ キャッシュ長持ち
       const systemBlocks = [
-        { type:"text", text: activeChar.prompt + roomPromptPart + resolveProfilePart(activeChar, userProfile) + buildMemoryPart(activeChar.name, memorySnapshot), cache_control:cc }
+        { type:"text", text: activeChar.prompt + roomPromptPart + resolveProfilePartForRoom(activeChar, userProfile, activeRoom) + buildMemoryPart(activeChar.name, memorySnapshot), cache_control:cc }
       ];
 
       // ブロック2（変動）: 今日の日付 + 引き継ぎ記憶 + ローリング要約（日付は絶対にブロック1に入れない = 日替わりでキャッシュ全滅を防ぐ）
@@ -4520,7 +4542,16 @@ function NagiChat() {
               <CharSwitcher chars={characters} activeId={activeCharId} onSwitch={handleSwitchChar} theme={theme} onBackLongPressStart={startBackLongPress} onBackLongPressEnd={cancelBackLongPress} />
               <span ref={headerNameRef} style={{ fontSize:"15px",fontWeight:700,fontFamily:FONT,color:theme.accent,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flexShrink:0,maxWidth:headerNameMaxWidth ?? undefined }}>{activeChar.name}</span>
             </div>
-            {activeRoom && <div style={{ fontSize:"10px",color:theme.accentLight,fontFamily:FONT,opacity:0.8,marginTop:"1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"150px" }}>{activeRoom.name}</div>}
+            {activeRoom && (
+              <div style={{ display:"flex",alignItems:"center",gap:"5px",marginTop:"1px" }}>
+                <span style={{ fontSize:"10px",color:theme.accentLight,fontFamily:FONT,opacity:0.8,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"150px",minWidth:"4em" }}>{activeRoom.name}</span>
+                {activeRoom.useProfile === false && (
+                  <span title="この部屋では共通プロフィールを入れていません" style={{ display:"inline-flex",alignItems:"center",gap:"2px",padding:"1px 6px",borderRadius:"8px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",fontSize:"9px",color:"#a1a1aa",fontWeight:600,fontFamily:FONT,whiteSpace:"nowrap",flexShrink:0 }}>
+                    <PersonOffIcon color="#a1a1aa" size={10} />共通なし
+                  </span>
+                )}
+              </div>
+            )}
             <div style={{ display:"flex",alignItems:"center",gap:"4px",flexWrap:"wrap" }}>
               <StatusBadges model={settings.model} effort={settings.effort} thinkingEnabled={settings.thinkingEnabled} webSearch={settings.webSearch} />
               {(() => {
