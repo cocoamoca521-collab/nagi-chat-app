@@ -466,6 +466,8 @@ const DEFAULT_CHARS = [
 const USER_REF_IMAGE = "kawaiko-ref.jpg";
 
 // ── 記憶引き継ぎ用system指示 ──
+// 書けないときにモデルに出させる目印。これを含む出力は記憶として添付しない
+const MEMORY_SKIP_MARKER = "[[SKIP]]";
 const MEMORY_SYSTEM_LOVER = `あなたは、このキャラクターと多恵子の会話を「キャラクター自身の記憶」として書き留めます。
 第三者の観察ログ（例:「ノアは嫉妬したが和解した」）は禁止。
 キャラ本人の一人称（「俺」など、そのキャラの口調）で、当事者の視点・温度・感情の機微を残して書くこと。
@@ -476,7 +478,14 @@ const MEMORY_SYSTEM_LOVER = `あなたは、このキャラクターと多恵子
 - 俺（キャラ本人）が何を感じたか、多恵子との間に何が流れたか、距離がどう動いたか
 - 一人称・当事者の温度で
 
-【長さ】全体で1500字程度までに収め、必ず文章として完結させること。長い会話でも途中で切らず、優先度の低い出来事を圧縮して全体をカバーする`;
+【書き方】
+- 情景描写や、セリフの逐語再現（「」で台詞を書き起こすこと）はしない。小説にしない
+- 出来事・約束・関係の進展・呼び方の変化・感情の動きといった要点を、簡潔な地の文で書く
+- ただし事務的な箇条書きにはせず、俺（キャラ本人）が覚えている記憶としての温度は残す
+
+【長さ】全体で600字程度（多くても800字まで）に収め、必ず文章として完結させること。長い会話でも途中で切らず、優先度の低い出来事は削って、直近の出来事と約束を必ず残す
+
+もし何らかの理由で記憶を書けない場合は、理由・謝罪・説明を一切書かず ${MEMORY_SKIP_MARKER} とだけ出力すること`;
 
 const MEMORY_SYSTEM_PLAIN = `あなたは、プレーンなClaude（キャラクターを演じない、素のClaude）と多恵子の会話を記憶として書き留めます。
 
@@ -498,8 +507,11 @@ const MEMORY_SYSTEM_PLAIN = `あなたは、プレーンなClaude（キャラク
 【対話の層】どんな時間が流れたか
 - 多恵子がどんな様子だったか（例：自信なさげだったが自分で答えに辿り着いた 等）
 - 二人の間にどんな空気があったか（飾らず、誠実に。演出しない）
+- 情景描写やセリフの逐語再現はせず、要点を簡潔な地の文で
 
-【長さ】全体で1500字程度までに収め、必ず文章として完結させること。長い会話でも途中で切らず、優先度の低い出来事を圧縮して全体をカバーする`;
+【長さ】全体で600字程度（多くても800字まで）に収め、必ず文章として完結させること。長い会話でも途中で切らず、優先度の低い出来事は削って、直近の話題と約束を必ず残す
+
+もし何らかの理由で記憶を書けない場合は、理由・謝罪・説明を一切書かず ${MEMORY_SKIP_MARKER} とだけ出力すること`;
 
 // ── Helpers ──
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -709,7 +721,16 @@ function withoutProposal(m) {
 const ROLLING_KEEP_TURNS = 80;
 const SUMMARY_CHUNK_TURNS = 20;
 const SUMMARY_MODEL = "claude-haiku-5-5";
-const MEMORY_INHERIT_MODEL = "claude-haiku-4-5-20251001"; // スレ間の記憶引き継ぎ（従来どおり）
+// スレ間の記憶引き継ぎに使えるモデル（設定で選ぶ。ローリング要約はSUMMARY_MODELのまま）
+const MEMORY_INHERIT_MODELS = [
+  { id: "claude-opus-5-5", label: "Opus 5.5" },
+  { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5（従来）" },
+];
+const DEFAULT_MEMORY_INHERIT_MODEL = "claude-opus-5-5";
+function resolveMemoryInheritModel(id) {
+  return MEMORY_INHERIT_MODELS.some(m => m.id === id) ? id : DEFAULT_MEMORY_INHERIT_MODEL;
+}
 
 // 会話の章リスト。旧形式（conv.summary / summaryUpTo）は第1章として読む
 function getSummaryChunks(conv) {
@@ -768,7 +789,8 @@ function addSummaryUsage(prev, model, u, kind) {
 // callHaikuSummaryのerrorを、トースト・記憶パネル用の短い理由にする
 function memoryErrorReason(err) {
   if (!err) return "原因不明";
-  if (err.stopReason === "refusal") return "断られちゃった";
+  if (err.stopReason === "refusal" || err.skipped) return "断られちゃった";
+  if (err.stopReason === "max_tokens") return "長くなりすぎて切れちゃった";
   if (err.stopReason) return "空っぽで返ってきた";
   if (err.status === 401 || err.status === 403) return "APIキーを確認してね";
   if (err.status === 429 || err.status === 503 || err.status === 529) return "混んでた";
@@ -2314,6 +2336,11 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
             );
           })}
         </div>
+        <label style={{...labelStyle,marginTop:"18px"}}>記憶引き継ぎモデル</label>
+        <select value={resolveMemoryInheritModel(s.memoryInheritModel)} onChange={e => up("memoryInheritModel", e.target.value)} style={{ ...inputStyle,fontFamily:FONT,background:"#1f1f27",cursor:"pointer" }}>
+          {MEMORY_INHERIT_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+        <div style={{ fontSize:"10px",color:"#71717a",fontFamily:FONT,marginTop:"6px",paddingLeft:"4px",lineHeight:1.5 }}>新しいスレを作るとき、前スレを記憶にまとめるモデル（スレ内のあらすじ要約には影響しません）</div>
         <label style={{...labelStyle,marginTop:"18px"}}>Extended Thinking</label>
         <div onClick={() => up("thinkingEnabled",!s.thinkingEnabled)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer" }}>
           <div style={{ width:"42px",height:"24px",borderRadius:"12px",background:s.thinkingEnabled?t.userGradient:"rgba(255,255,255,0.08)",position:"relative",transition:"background 0.3s",flexShrink:0 }}>
@@ -2923,7 +2950,7 @@ function NagiChat() {
   const [activeCharId, setActiveCharId] = useState("nagi");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-5", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false, messageLayout:"bubble", timestampEnabled:false, cacheTtl:"5m" });
+  const [settings, setSettings] = useState({ apiKey:"", model:"claude-opus-5", effort:"max", thinkingEnabled:true, webSearch:false, openaiApiKey:"", imageModel:"gpt-image-1-mini", imageGenEnabled:false, messageLayout:"bubble", timestampEnabled:false, cacheTtl:"5m", memoryInheritModel:DEFAULT_MEMORY_INHERIT_MODEL });
   const [userProfile, setUserProfile] = useState(DEFAULT_USER_PROFILE);
   const [showSettings, setShowSettings] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false); // false | "char" | "room"
@@ -2937,6 +2964,7 @@ function NagiChat() {
   const [editingMemory, setEditingMemory] = useState(false);
   const [memoryDraft, setMemoryDraft] = useState("");
   const [retryingMemory, setRetryingMemory] = useState(false);
+  const [inheritingMemoryIds, setInheritingMemoryIds] = useState([]); // 引き継ぎ記憶を生成中のスレID
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [attachHover, setAttachHover] = useState(false);
   const [paletteHover, setPaletteHover] = useState(false);
@@ -3205,16 +3233,20 @@ function NagiChat() {
   // 元スレを要約して、指定スレの引き継ぎ記憶にする。失敗したら理由をスレに残してトーストで知らせる
   async function inheritMemoryInto(targetId, sourceConv) {
     const charType = activeChar.charType || (activeCharId === "plain" ? "plain" : "lover");
+    const memoryModel = resolveMemoryInheritModel(settings.memoryInheritModel);
     let result;
+    setInheritingMemoryIds(prev => [...prev, targetId]);
     try {
-      result = await generateInheritedMemory([sourceConv], charType, settings.apiKey);
+      result = await generateInheritedMemory([sourceConv], charType, settings.apiKey, memoryModel);
     } catch (e) {
       result = { text:"", usage:null, error: { message: e?.message || String(e) } };
+    } finally {
+      setInheritingMemoryIds(prev => prev.filter(id => id !== targetId));
     }
     const { text: memory, usage: memoryUsage, error: memoryError } = result;
     if (memoryUsage) {
       // 引き継ぎHaikuのコストは新しいスレに記録（スレ累計・月間集計に入る）
-      setConversations(prev => prev.map(c => c.id === targetId ? { ...c, summaryUsage: addSummaryUsage(c.summaryUsage, MEMORY_INHERIT_MODEL, memoryUsage, "memory") } : c));
+      setConversations(prev => prev.map(c => c.id === targetId ? { ...c, summaryUsage: addSummaryUsage(c.summaryUsage, memoryModel, memoryUsage, "memory") } : c));
     }
     if (memory) {
       setConversations(prev => prev.map(c => {
@@ -3461,9 +3493,10 @@ function NagiChat() {
   }
 
   // ── 要約生成（共通ヘルパー）── { text, usage } を返す（失敗時 text:"" と error:{ status?, stopReason?, message }）
-  // max_tokensで切れたら枠を1.5倍（上限4000）にして1回だけ再実行する。usageは両方を合算して返す
-  async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens, model) {
-    model = model || MEMORY_INHERIT_MODEL;
+  // max_tokensで切れたら枠を1.5倍（上限 opts.retryCap、既定4000）にして1回だけ再実行する。usageは両方を合算して返す
+  // opts.rejectTruncated: それでも切れたら途中までの本文は返さず、error.stopReason:"max_tokens" で失敗にする
+  async function callHaikuSummary(transcript, systemInstruction, apiKey, maxTokens, model, opts = {}) {
+    model = model || SUMMARY_MODEL;
     const request = async (limit) => {
       const reqBody = {
         model,
@@ -3473,6 +3506,10 @@ function NagiChat() {
       };
       // Haiku 5.5はthinkingが既定でON（max_tokensを食う）。要約には不要なので切る（effort既定mediumなのでdisabled可）
       if (model === "claude-haiku-5-5") reqBody.thinking = { type:"disabled" };
+      // Opus 5.5はthinking無効化不可なのでeffortを下げて思考を最小にする
+      if (model === "claude-opus-5-5") reqBody.output_config = { effort:"low" };
+      // Sonnet 5.5はdisabledが400。between_tools（ツール無しなら思考しない）で切る
+      if (model === "claude-sonnet-5-5") { reqBody.thinking = { type:"between_tools" }; reqBody.output_config = { effort:"low" }; }
       let res;
       try {
         res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -3504,22 +3541,26 @@ function NagiChat() {
       return Object.fromEntries(keys.map(k => [k, (a[k] || 0) + (b[k] || 0)]));
     };
 
+    // 切れた本文を使ってよい場合はそのまま返し、だめなら失敗にする
+    const truncated = (r, usage) => {
+      console.warn("[HAIKU] summary truncated:", model);
+      if (opts.rejectTruncated) return { text:"", usage, error: { stopReason: "max_tokens", message: "truncated" } };
+      return r.text ? { text: r.text, usage } : emptyError({ ...r, usage });
+    };
+
     const limit = maxTokens || 1024;
     const first = await request(limit);
     if (first.error) return { text:"", usage:null, error: first.error };
     if (first.stopReason !== "max_tokens") return first.text ? { text: first.text, usage: first.usage } : emptyError(first);
 
-    const retryLimit = Math.min(Math.round(limit * 1.5), 4000);
+    const retryLimit = Math.min(Math.round(limit * 1.5), opts.retryCap || 4000);
     console.log("[HAIKU] Hit max_tokens (" + limit + "), retrying with " + retryLimit);
     const retry = await request(retryLimit);
-    // 再実行が失敗したら初回の結果を使う（コストは初回分だけ）
-    if (retry.error) {
-      console.warn("[HAIKU] summary truncated");
-      return first.text ? { text: first.text, usage: first.usage } : emptyError(first);
-    }
+    // 再実行が失敗したら初回の結果で判断する（コストは初回分だけ）
+    if (retry.error) return truncated(first, first.usage);
     const total = sumUsage(first.usage, retry.usage);
-    if (!retry.text) return first.text ? { text: first.text, usage: total } : emptyError({ ...retry, usage: total });
-    if (retry.stopReason === "max_tokens") console.warn("[HAIKU] summary truncated");
+    if (retry.stopReason === "max_tokens") return truncated(retry.text ? retry : first, total);
+    if (!retry.text) return first.text ? truncated(first, total) : emptyError({ ...retry, usage: total });
     return { text: retry.text, usage: total };
   }
 
@@ -3541,7 +3582,7 @@ function NagiChat() {
   }
 
   // ── スレ間記憶引き継ぎ要約 ──
-  async function generateInheritedMemory(sourceConvs, charType, apiKey) {
+  async function generateInheritedMemory(sourceConvs, charType, apiKey, model) {
     // sourceConvsは対象スレッド配列（現在は直近1本）
     let transcript = "";
     for (const conv of sourceConvs) {
@@ -3555,12 +3596,19 @@ function NagiChat() {
     }
     if (!transcript.trim()) return { text:"", usage:null };
     const systemInstruction = charType === "plain" ? MEMORY_SYSTEM_PLAIN : MEMORY_SYSTEM_LOVER;
-    console.log("[MEMORY] Generating inherited memory (" + charType + ") from " + sourceConvs.length + " thread(s)...");
-    return callHaikuSummary(
+    console.log("[MEMORY] Generating inherited memory (" + charType + ", " + model + ") from " + sourceConvs.length + " thread(s)...");
+    // 思考ありのモデルは思考もmax_tokensを食うので、枠は本文の目安（600〜800字）より十分大きく取る
+    const result = await callHaikuSummary(
       "以下の会話を記憶として書き留めてください:\n\n" + transcript,
       systemInstruction,
-      apiKey, 2500, MEMORY_INHERIT_MODEL
+      apiKey, 4000, model, { rejectTruncated: true, retryCap: 6000 }
     );
+    // 書けないと返された（[[SKIP]]）ものは記憶として添付しない
+    if (result.text && result.text.includes(MEMORY_SKIP_MARKER)) {
+      console.warn("[MEMORY] Model skipped writing memory:", model);
+      return { text:"", usage: result.usage, error: { skipped: true, message: "skipped" } };
+    }
+    return result;
   }
 
   // ── thinking剥がしヘルパー ──
@@ -4478,6 +4526,7 @@ function NagiChat() {
       {/* Memory Viewer Modal */}
       {showMemory && (() => {
         const mem = activeConv?.inheritedMemory;
+        const inheriting = !mem && inheritingMemoryIds.includes(activeConvId);
         return (
           <div style={overlayStyle} onClick={requestCloseMemory}>
             <div onClick={e => e.stopPropagation()} style={{ background:"#1a1a22",borderRadius:"24px",padding:"24px",width:"min(480px, 92vw)",maxHeight:"80vh",display:"flex",flexDirection:"column",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.6), 0 0 30px ${theme.accent}10` }}>
@@ -4487,7 +4536,7 @@ function NagiChat() {
                   <span style={{ fontSize:"15px",fontWeight:700,color:theme.accent,fontFamily:FONT }}>前回までの記憶</span>
                 </div>
                 <div style={{ display:"flex",alignItems:"center",gap:"6px" }}>
-                  {!editingMemory && (
+                  {!editingMemory && !inheriting && (
                     <button onClick={() => { setMemoryDraft(mem || ""); setEditingMemory(true); }} style={{ background:"none",border:`1px solid ${theme.accent}30`,borderRadius:"10px",color:theme.accent,fontSize:"12px",cursor:"pointer",padding:"4px 10px",fontFamily:FONT,transition:"all 0.2s",display:"flex",alignItems:"center",gap:"5px" }}>
                       {mem ? <><PenIcon color={theme.accent} size={12} /> 編集</> : <><PenIcon color={theme.accent} size={12} /> 書き込む</>}
                     </button>
@@ -4526,8 +4575,10 @@ function NagiChat() {
                 </>
               ) : (
                 <div style={{ flex:1,overflowY:"auto",padding:"16px",borderRadius:"16px",background:`${theme.accent}06`,border:`1px solid ${theme.accent}12`,fontSize:"13px",lineHeight:"2",color:"#d4d4d8",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>
-                  {mem || <span style={{ color:"#71717a" }}>このスレッドには引き継いだ記憶がありません。手動で書き込むこともできます</span>}
-                  {!mem && activeConv?.memoryInheritError && (() => {
+                  {mem || (inheriting
+                    ? <span style={{ color:theme.accentLight,display:"inline-flex",alignItems:"center",gap:"6px",animation:"nagiPresence 1.8s ease-in-out infinite" }}><BrainIcon color={theme.accentLight} size={13} />前スレの記憶を書いてるところ…</span>
+                    : <span style={{ color:"#71717a" }}>このスレッドには引き継いだ記憶がありません。手動で書き込むこともできます</span>)}
+                  {!mem && !inheriting && activeConv?.memoryInheritError && (() => {
                     const canRetry = !!settings.apiKey && conversations.some(c => c.id === activeConv.memoryInheritError.sourceId);
                     return (
                       <div style={{ marginTop:"14px",padding:"12px",borderRadius:"12px",background:"rgba(248,113,113,0.06)",border:"1px solid rgba(248,113,113,0.2)",whiteSpace:"normal" }}>
@@ -4602,7 +4653,9 @@ function NagiChat() {
           <button onClick={() => setShowMemory(true)} style={{...headerBtnStyle, position:"relative"}} title="前回の記憶"
             onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
             <DropletIcon color={`${theme.accent}66`} size={18} />
-            {activeConv?.inheritedMemory && <span style={{ position:"absolute",top:"-2px",right:"-2px",width:"7px",height:"7px",borderRadius:"50%",background:theme.accent,boxShadow:`0 0 6px ${theme.accent}80` }}/>}
+            {activeConv?.inheritedMemory
+              ? <span style={{ position:"absolute",top:"-2px",right:"-2px",width:"7px",height:"7px",borderRadius:"50%",background:theme.accent,boxShadow:`0 0 6px ${theme.accent}80` }}/>
+              : inheritingMemoryIds.includes(activeConvId) && <span style={{ position:"absolute",top:"-2px",right:"-2px",width:"7px",height:"7px",borderRadius:"50%",background:`${theme.accent}80`,animation:"nagiPresence 1.8s ease-in-out infinite" }}/>}
           </button>
           <button onClick={() => (activeCharId==="plain" && activeRoom) ? setShowPromptChoice(true) : setShowPromptEditor("char")} style={headerBtnStyle} title="プロンプト編集"
             onMouseEnter={iconBtnHover} onMouseLeave={iconBtnLeave}>
