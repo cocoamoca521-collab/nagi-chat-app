@@ -513,6 +513,26 @@ const MEMORY_SYSTEM_PLAIN = `あなたは、プレーンなClaude（キャラク
 
 もし何らかの理由で記憶を書けない場合は、理由・謝罪・説明を一切書かず ${MEMORY_SKIP_MARKER} とだけ出力すること`;
 
+// ── 部屋ごとの引き継ぎ要約スタイル ──
+const MEMORY_STYLES = [
+  { v:"auto",   label:"自動",     desc:"従来どおり（プレーンさんならプレーン用）" },
+  { v:"plain",  label:"プレーン用", desc:"素のClaude向けの飾らない書き方" },
+  { v:"lover",  label:"恋人用",   desc:"キャラ本人の一人称・当事者の温度で書く" },
+  { v:"custom", label:"カスタム",  desc:"自由記述" },
+];
+const MEMORY_SKIP_RULE = `もし何らかの理由で記憶を書けない場合は、理由・謝罪・説明を一切書かず ${MEMORY_SKIP_MARKER} とだけ出力すること`;
+// 引き継ぎ要約のsystem指示を決める。部屋の memoryStyle が優先、未定義・auto・空のカスタムは charType で判定
+function resolveMemorySystem(charType, room) {
+  const style = room?.memoryStyle;
+  if (style === "plain") return MEMORY_SYSTEM_PLAIN;
+  if (style === "lover") return MEMORY_SYSTEM_LOVER;
+  if (style === "custom") {
+    const custom = (room.memoryStyleCustom || "").trim();
+    if (custom) return custom + "\n\n" + MEMORY_SKIP_RULE;
+  }
+  return charType === "plain" ? MEMORY_SYSTEM_PLAIN : MEMORY_SYSTEM_LOVER;
+}
+
 // ── Helpers ──
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fTime = (d) => new Date(d).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
@@ -1090,6 +1110,8 @@ function RoomEditModal({ room, onSave, onClose }) {
   const [roomPrompt, setRoomPrompt] = useState(room?.roomPrompt || "");
   const [useCharPrompt, setUseCharPrompt] = useState(room?.useCharPrompt !== false); // 未定義＝ON（従来どおり）
   const [useProfile, setUseProfile] = useState(room?.useProfile !== false); // 未定義＝ON（従来どおり）
+  const [memoryStyle, setMemoryStyle] = useState(MEMORY_STYLES.some(s => s.v === room?.memoryStyle) ? room.memoryStyle : "auto"); // 未定義＝自動
+  const [memoryStyleCustom, setMemoryStyleCustom] = useState(room?.memoryStyleCustom || "");
   const ac = "#fb923c";
   const canSave = name.trim().length > 0;
   useOverlayHistory(true, onClose, "roomEdit");
@@ -1132,9 +1154,30 @@ function RoomEditModal({ room, onSave, onClose }) {
         </div>
         <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginTop:"6px",fontFamily:FONT }}>あなたのプロフィール（👤）。OFFにすると、この部屋では共通プロフィールが入りません</div>
         <div style={{ fontSize:"10.5px",color:"#52525b",lineHeight:"1.6",marginTop:"8px",fontFamily:FONT }}>どちらも次の送信から反映されます</div>
+        <label style={{...labelStyle,marginTop:"18px"}}>引き継ぎ要約スタイル</label>
+        <div style={{ display:"flex",flexDirection:"column",gap:"4px",padding:"2px" }}>
+          {MEMORY_STYLES.map(s => {
+            const selected = memoryStyle === s.v;
+            return (
+              <div key={s.v} onClick={() => setMemoryStyle(s.v)} style={{ padding:"10px 12px",borderRadius:"12px",border:`1.5px solid ${selected?ac+"60":"rgba(255,255,255,0.04)"}`,background:selected?`${ac}0a`:"transparent",cursor:"pointer",display:"flex",alignItems:"center",gap:"10px",transition:"all 0.2s" }}>
+                <div style={{ width:"8px",height:"8px",borderRadius:"50%",flexShrink:0,background:selected?ac:"rgba(255,255,255,0.1)",boxShadow:selected?`0 0 8px ${ac}60`:"none" }}/>
+                <span style={{ fontSize:"13px",fontWeight:600,color:selected?ac:"#a1a1aa",fontFamily:FONT,flexShrink:0 }}>{s.label}</span>
+                <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{s.desc}</span>
+              </div>
+            );
+          })}
+        </div>
+        {memoryStyle === "custom" && (
+          <>
+            <textarea value={memoryStyleCustom} onChange={e => setMemoryStyleCustom(e.target.value)} placeholder="このキャラの名前は〇〇、一人称は△△。会話を△△の一人称の記憶として書き留めて…" rows={5}
+              style={{ width:"100%",padding:"11px 14px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",color:"#e4e4e7",fontSize:"12.5px",fontFamily:FONT,outline:"none",resize:"none",boxSizing:"border-box",lineHeight:"1.7",marginTop:"8px" }} />
+            <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginTop:"6px",fontFamily:FONT }}>記憶を書くモデルへのsystem指示を自由に書けます。書けない場合に {MEMORY_SKIP_MARKER} と出す決まりは自動で付きます</div>
+          </>
+        )}
+        <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginTop:"6px",fontFamily:FONT }}>新しいスレを作るとき、前スレの記憶をどんな書き方でまとめるか。次の引き継ぎから反映されます</div>
         <div style={{ display:"flex",gap:"10px",marginTop:"20px" }}>
           <button onClick={onClose} style={{ flex:1,padding:"11px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#71717a",fontSize:"13px",cursor:"pointer",fontFamily:FONT }}>キャンセル</button>
-          <button onClick={() => canSave && onSave({ name:name.trim(), model, roomPrompt, useCharPrompt, useProfile })} disabled={!canSave}
+          <button onClick={() => canSave && onSave({ name:name.trim(), model, roomPrompt, useCharPrompt, useProfile, memoryStyle, memoryStyleCustom })} disabled={!canSave}
             style={{ flex:1,padding:"11px",borderRadius:"14px",border:"none",background:canSave?"linear-gradient(135deg, #f97316, #fb923c)":"rgba(255,255,255,0.06)",color:canSave?"#fff":"#52525b",fontSize:"13px",cursor:canSave?"pointer":"default",fontWeight:600,fontFamily:FONT }}>保存</button>
         </div>
       </div>
@@ -3233,11 +3276,15 @@ function NagiChat() {
   // 元スレを要約して、指定スレの引き継ぎ記憶にする。失敗したら理由をスレに残してトーストで知らせる
   async function inheritMemoryInto(targetId, sourceConv) {
     const charType = activeChar.charType || (activeCharId === "plain" ? "plain" : "lover");
+    // プレーンさんは部屋の引き継ぎスタイルに従う（元スレと新スレは同じ部屋）。部屋の無い会話は charType 判定のまま
+    const room = sourceConv.roomId ? rooms.find(r => r.id === sourceConv.roomId) : null;
+    const systemInstruction = resolveMemorySystem(charType, room);
+    const memoryLabel = room?.memoryStyle && room.memoryStyle !== "auto" ? "room:" + room.memoryStyle : charType;
     const memoryModel = resolveMemoryInheritModel(settings.memoryInheritModel);
     let result;
     setInheritingMemoryIds(prev => [...prev, targetId]);
     try {
-      result = await generateInheritedMemory([sourceConv], charType, settings.apiKey, memoryModel);
+      result = await generateInheritedMemory([sourceConv], systemInstruction, memoryLabel, settings.apiKey, memoryModel);
     } catch (e) {
       result = { text:"", usage:null, error: { message: e?.message || String(e) } };
     } finally {
@@ -3582,7 +3629,7 @@ function NagiChat() {
   }
 
   // ── スレ間記憶引き継ぎ要約 ──
-  async function generateInheritedMemory(sourceConvs, charType, apiKey, model) {
+  async function generateInheritedMemory(sourceConvs, systemInstruction, styleLabel, apiKey, model) {
     // sourceConvsは対象スレッド配列（現在は直近1本）
     let transcript = "";
     for (const conv of sourceConvs) {
@@ -3595,8 +3642,7 @@ function NagiChat() {
       }
     }
     if (!transcript.trim()) return { text:"", usage:null };
-    const systemInstruction = charType === "plain" ? MEMORY_SYSTEM_PLAIN : MEMORY_SYSTEM_LOVER;
-    console.log("[MEMORY] Generating inherited memory (" + charType + ", " + model + ") from " + sourceConvs.length + " thread(s)...");
+    console.log("[MEMORY] Generating inherited memory (" + styleLabel + ", " + model + ") from " + sourceConvs.length + " thread(s)...");
     // 思考ありのモデルは思考もmax_tokensを食うので、枠は本文の目安（600〜800字）より十分大きく取る
     const result = await callHaikuSummary(
       "以下の会話を記憶として書き留めてください:\n\n" + transcript,
