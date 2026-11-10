@@ -153,6 +153,7 @@ const DEFAULT_USER_PROFILE = `【ユーザー情報】
 const SK = { convos: "nagichat-convos", settings: "nagichat-settings", chars: "nagichat-chars", profile: "nagichat-profile", rooms: "nagichat-rooms", pendingMemories: "nagichat-pending-memories" };
 
 const MODELS = [
+  { id: "claude-fable-5-2", label: "Fable 5.2", tag: "本命", color: "#7dd3fc" },
   { id: "claude-fable-5-1", label: "Fable 5.1", tag: "反射", color: "#38bdf8" },
   { id: "claude-fable-5", label: "Fable 5", tag: "帰還", color: "#60a5fa" },
   { id: "claude-opus-5-5", label: "Opus 5.5", tag: "直球", color: "#e879f9" },
@@ -169,7 +170,7 @@ const MODELS = [
 ];
 
 // effort "xhigh" を受け付けるモデル（それ以外では max に読み替える）
-const XHIGH_MODELS = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-opus-5","claude-opus-5-5","claude-sonnet-5-5","claude-haiku-5-5"];
+const XHIGH_MODELS = ["claude-opus-4-7","claude-opus-4-8","claude-fable-5","claude-fable-5-1","claude-fable-5-2","claude-opus-5","claude-opus-5-5","claude-sonnet-5-5","claude-haiku-5-5"];
 
 const EFFORTS = [
   { v: "low", label: "ECO", icon: LeafIcon, desc: "省エネ", color: "#4ade80" },
@@ -184,6 +185,7 @@ const EFFORTS = [
 // キャッシュ書込 = in × 1.25（5分TTL）/ in × 2.0（1時間TTL）, キャッシュ読取 = in × 0.1（cacheRead指定時はそちらを優先）
 // cacheReadUntil: 料金改定前のメッセージ用。timestampがbefore未満ならrateで計算（過去分は当時の単価のまま）
 const PRICING = {
+  "claude-fable-5-2":            { in: 8,  out: 40, cacheRead: 0.20 }, // 2026-11-09公式
   "claude-fable-5-1":            { in: 10, out: 50, cacheRead: 0.25 },
   "claude-fable-5":              { in: 10, out: 50 },
   "claude-opus-5-5":             { in: 4,  out: 20, cacheRead: 0.20 },
