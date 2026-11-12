@@ -2638,6 +2638,17 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
   const activeItems = key => bucketItems(key).filter(m => !m.archived);
   const archivedItems = key => bucketItems(key).filter(m => m.archived);
   const [openArchives, setOpenArchives] = useState({}); // バケットごとのアーカイブ折りたたみ開閉
+  const [selectingBucket, setSelectingBucket] = useState(null); // null | 選択モード中のバケットkey
+  const [selectedMemIds, setSelectedMemIds] = useState(() => new Set());
+  const [confirmArchiveAll, setConfirmArchiveAll] = useState(null); // null | 全部アーカイブ確認中のバケットkey
+  const startSelecting = key => { setSelectingBucket(key); setSelectedMemIds(new Set()); };
+  const stopSelecting = () => { setSelectingBucket(null); setSelectedMemIds(new Set()); };
+  const toggleSelected = id => setSelectedMemIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  // 指定IDの現役メモリをアーカイブ（アーカイブ済みは archivedAt を上書きしない）
+  const archiveIds = (key, ids) => {
+    const now = Date.now();
+    updateBucket(key, arr => arr.map(x => ids.has(x.id) && !x.archived ? { ...x, archived:true, archivedAt:now } : x));
+  };
   const updateBucket = (key, fn) => key ? setRoomMems(prev => ({ ...prev, [key]: fn(prev[key] || []) })) : setMems(fn);
   const moveMem = (m, from, to) => { updateBucket(from, arr => arr.filter(x => x.id !== m.id)); updateBucket(to, arr => [...arr, m]); };
   const knownRoomIds = (rooms || []).map(r => r.id);
@@ -2760,11 +2771,35 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
             )}
             <div style={{ display:"flex",flexDirection:"column",gap:"8px",opacity:memOn ? 1 : 0.55,transition:"opacity 0.2s" }}>
               {(() => {
-                const groupTitle = (label, count) => (
-                  <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",margin:"6px 2px 0" }}>
-                    <span style={{ fontSize:"11.5px",fontWeight:700,color:acl,fontFamily:FONT,display:"flex",alignItems:"center",gap:"5px" }}>{label}</span>
-                    <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{count}件</span>
+                const textBtnStyle = { background:"none",border:"none",padding:"2px 4px",cursor:"pointer",fontSize:"10.5px",color:acl,fontFamily:FONT,fontWeight:600 };
+                // 一括操作の入り口（現役1件以上・選択モード外・編集中でないときだけ）
+                const bucketTools = bucket => {
+                  if (activeItems(bucket).length === 0 || selectingBucket === bucket || editingMemId !== null) return null;
+                  return (
+                    <span style={{ display:"flex",alignItems:"center",gap:"2px" }}>
+                      <button onClick={() => startSelecting(bucket)} style={textBtnStyle}>選択</button>
+                      <button onClick={() => setConfirmArchiveAll(bucket)} style={textBtnStyle}>全部アーカイブ</button>
+                    </span>
+                  );
+                };
+                const groupTitle = (label, count, bucket) => (
+                  <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",gap:"8px",margin:"6px 2px 0" }}>
+                    <span style={{ fontSize:"11.5px",fontWeight:700,color:acl,fontFamily:FONT,display:"flex",alignItems:"center",gap:"5px",minWidth:0 }}>{label}</span>
+                    <span style={{ display:"flex",alignItems:"center",gap:"6px",flexShrink:0 }}>
+                      {bucketTools(bucket)}
+                      <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{count}件</span>
+                    </span>
                   </div>
+                );
+                const checkBox = checked => (
+                  <span style={{ width:"18px",height:"18px",borderRadius:"6px",flexShrink:0,marginTop:"2px",display:"flex",alignItems:"center",justifyContent:"center",
+                    border:`1.5px solid ${checked ? ac : ac + "66"}`,background:checked ? ac : "transparent",transition:"all 0.15s" }}>
+                    {checked && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12.5l4.5 4.5L19 7.5" />
+                      </svg>
+                    )}
+                  </span>
                 );
                 const moveTargets = [{ key:"", label:"共通" }, ...(rooms || []).map(r => ({ key:r.id, label:r.name }))];
                 const renderEditor = (key, onDecide) => (
@@ -2781,6 +2816,20 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                 const renderItem = (m, bucket) => {
                   if (editingMemId === m.id) return renderEditor(m.id, v => updateBucket(bucket, arr => arr.map(x => x.id === m.id ? { ...x, text:v } : x)));
                   const on = m.enabled !== false;
+                  if (selectingBucket === bucket) {
+                    const checked = selectedMemIds.has(m.id);
+                    return (
+                      <div key={m.id} onClick={() => toggleSelected(m.id)} role="checkbox" aria-checked={checked}
+                        style={{ display:"flex",alignItems:"flex-start",gap:"10px",padding:"10px 12px",borderRadius:"16px",cursor:"pointer",userSelect:"none",
+                          background:checked ? `${ac}12` : "rgba(255,255,255,0.025)",border:`1.5px solid ${checked ? ac + "66" : ac + "1f"}`,opacity:on ? 1 : 0.5,transition:"all 0.15s" }}>
+                        {checkBox(checked)}
+                        <div style={{ flex:1,minWidth:0 }}>
+                          <div style={{ fontSize:"12.5px",color:"#e4e4e7",lineHeight:"1.7",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>{m.text}</div>
+                          {m.createdAt && <div style={{ fontSize:"9.5px",color:"#52525b",fontFamily:FONT,marginTop:"4px" }}>{fDate(m.createdAt)}</div>}
+                        </div>
+                      </div>
+                    );
+                  }
                   return (
                   <div key={m.id} style={{ display:"flex",alignItems:"flex-start",gap:"8px",padding:"10px 12px",borderRadius:"16px",background:"rgba(255,255,255,0.025)",border:`1.5px solid ${ac}1f`,opacity:on ? 1 : 0.5,transition:"opacity 0.2s" }}>
                     <span style={{ color:ac,fontSize:"11px",lineHeight:"1.8",flexShrink:0 }}>✦</span>
@@ -2848,7 +2897,26 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                     </div>
                   );
                 };
+                // 選択モード中の操作バー（「＋手動で追加」の位置に出す）
+                const renderSelectBar = bucket => {
+                  const items = activeItems(bucket);
+                  const n = items.filter(m => selectedMemIds.has(m.id)).length;
+                  const allChecked = items.length > 0 && n === items.length;
+                  return (
+                    <div key={"select:" + bucket} style={{ display:"flex",gap:"6px",alignItems:"center" }}>
+                      <button onClick={() => setSelectedMemIds(allChecked ? new Set() : new Set(items.map(m => m.id)))}
+                        style={{ padding:"9px 12px",borderRadius:"14px",border:`1px solid ${ac}40`,background:"transparent",color:acl,fontSize:"11.5px",cursor:"pointer",fontFamily:FONT,fontWeight:600,flexShrink:0 }}>{allChecked ? "全解除" : "全選択"}</button>
+                      <button onClick={() => { const ids = new Set(items.filter(m => selectedMemIds.has(m.id)).map(m => m.id)); archiveIds(bucket, ids); stopSelecting(); }} disabled={n === 0}
+                        style={{ flex:1,padding:"9px 10px",borderRadius:"14px",border:"none",background:t.userGradient,color:"#fff",fontSize:"11.5px",cursor:n === 0 ? "default" : "pointer",fontFamily:FONT,fontWeight:600,opacity:n === 0 ? 0.4 : 1,display:"flex",alignItems:"center",justifyContent:"center",gap:"5px" }}>
+                        <ArchiveIcon color="#fff" size={12} />選択をアーカイブ（{n}件）
+                      </button>
+                      <button onClick={stopSelecting}
+                        style={{ padding:"9px 12px",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"#a1a1aa",fontSize:"11.5px",cursor:"pointer",fontFamily:FONT,flexShrink:0 }}>キャンセル</button>
+                    </div>
+                  );
+                };
                 const renderAdd = bucket => {
+                  if (selectingBucket === bucket) return renderSelectBar(bucket);
                   const key = "new:" + bucket;
                   if (editingMemId === key) return renderEditor(key, v => updateBucket(bucket, arr => [...arr, { id: uid(), text: v, createdAt: Date.now() }]));
                   return (
@@ -2858,17 +2926,18 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                 };
                 const empty = text => <div style={{ fontSize:"11px",color:"#3f3f46",textAlign:"center",padding:"12px",fontFamily:FONT,borderRadius:"14px",border:"1px dashed rgba(255,255,255,0.06)" }}>{text}</div>;
                 if (!(hasRooms && mScope === "room")) {
-                  return <>{activeItems("").length === 0 && empty("まだ覚えていることはありません")}{activeItems("").map(m => renderItem(m, ""))}{renderAdd("")}{renderArchived("")}</>;
+                  const tools = bucketTools("");
+                  return <>{tools && <div style={{ display:"flex",justifyContent:"flex-end",margin:"0 2px -2px" }}>{tools}</div>}{activeItems("").length === 0 && empty("まだ覚えていることはありません")}{activeItems("").map(m => renderItem(m, ""))}{renderAdd("")}{renderArchived("")}</>;
                 }
                 return (
                   <>
-                    {groupTitle(<><GlobeIcon color={acl} size={12} />共通（全部屋）</>, activeItems("").length)}
+                    {groupTitle(<><GlobeIcon color={acl} size={12} />共通（全部屋）</>, activeItems("").length, "")}
                     {activeItems("").length === 0 ? empty("共通の記憶はありません") : activeItems("").map(m => renderItem(m, ""))}
                     {renderAdd("")}
                     {renderArchived("")}
                     {(rooms || []).map(r => (
                       <React.Fragment key={r.id}>
-                        {groupTitle(<><CloudIcon color={acl} size={12} />{r.name}</>, activeItems(r.id).length)}
+                        {groupTitle(<><CloudIcon color={acl} size={12} />{r.name}</>, activeItems(r.id).length, r.id)}
                         {activeItems(r.id).length === 0 ? empty("この部屋だけの記憶はありません") : activeItems(r.id).map(m => renderItem(m, r.id))}
                         {renderAdd(r.id)}
                         {renderArchived(r.id)}
@@ -2876,8 +2945,9 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                     ))}
                     {orphanRoomIds.map(id => (
                       <React.Fragment key={id}>
-                        {groupTitle("削除済みの部屋", activeItems(id).length)}
+                        {groupTitle("削除済みの部屋", activeItems(id).length, id)}
                         {activeItems(id).map(m => renderItem(m, id))}
+                        {selectingBucket === id && renderSelectBar(id)}
                         {renderArchived(id)}
                       </React.Fragment>
                     ))}
@@ -2907,6 +2977,18 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
           if (d.type === "lore") setLore(prev => prev.filter(x => x.id !== d.id));
           else updateBucket(d.bucket, arr => arr.filter(x => x.id !== d.id));
           setConfirmDel(null);
+        }} />
+    )}
+    {confirmArchiveAll !== null && (
+      <DeleteConfirmDialog theme={t} kind="archiveAllConfirm"
+        icon={<ArchiveIcon color={acl} size={32} />} title="全部アーカイブする？" confirmLabel="アーカイブする"
+        message={`この枠の現役メモリ ${activeItems(confirmArchiveAll).length}件をすべてアーカイブするよ（アーカイブからいつでも戻せる）`}
+        onCancel={() => setConfirmArchiveAll(null)}
+        onConfirm={() => {
+          const key = confirmArchiveAll;
+          archiveIds(key, new Set(activeItems(key).map(m => m.id)));
+          if (selectingBucket === key) stopSelecting();
+          setConfirmArchiveAll(null);
         }} />
     )}
     {confirmDiscard && <DiscardConfirmDialog theme={t} onCancel={() => setConfirmDiscard(false)} onConfirm={() => { setConfirmDiscard(false); onClose(); }} />}
