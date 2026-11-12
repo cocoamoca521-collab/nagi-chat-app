@@ -721,7 +721,7 @@ function normalizeRoomMemories(v) {
 function memoriesForSnapshot(char, roomId) {
   const common = char.memories || [];
   const room = char.memoryScope === "room" && roomId ? (normalizeRoomMemories(char.roomMemories)[roomId] || []) : [];
-  return [...common, ...room].filter(m => m.enabled !== false).map(m => m.text);
+  return [...common, ...room].filter(m => m.enabled !== false && !m.archived).map(m => m.text);
 }
 // 承認したメモリーの保存先（部屋枠ならroomId、共通枠ならnull）
 function memoryTargetRoom(char, roomId, rooms) {
@@ -1458,6 +1458,17 @@ function XIcon({ color, size }) {
     <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round">
       <line x1="6" y1="6" x2="18" y2="18" />
       <line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+  );
+}
+
+// ═══ Archive Icon SVG (アーカイブ) ═══
+function ArchiveIcon({ color, size }) {
+  return (
+    <svg width={size||20} height={size||20} viewBox="0 0 24 24" fill="none" stroke={color||"#fff"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+      <line x1="10" y1="12" x2="14" y2="12" />
     </svg>
   );
 }
@@ -2623,11 +2634,15 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
   const [roomMems, setRoomMems] = useState(normalizeRoomMemories(roomMemories));
   // 枠（bucket）："" = 共通枠（char.memories）、それ以外 = 部屋ID（char.roomMemories[roomId]）
   const bucketItems = key => key ? (roomMems[key] || []) : mems;
+  // アーカイブ済み（archived: true）は保持するが一覧・件数・注入の対象外
+  const activeItems = key => bucketItems(key).filter(m => !m.archived);
+  const archivedItems = key => bucketItems(key).filter(m => m.archived);
+  const [openArchives, setOpenArchives] = useState({}); // バケットごとのアーカイブ折りたたみ開閉
   const updateBucket = (key, fn) => key ? setRoomMems(prev => ({ ...prev, [key]: fn(prev[key] || []) })) : setMems(fn);
   const moveMem = (m, from, to) => { updateBucket(from, arr => arr.filter(x => x.id !== m.id)); updateBucket(to, arr => [...arr, m]); };
   const knownRoomIds = (rooms || []).map(r => r.id);
   const orphanRoomIds = Object.keys(roomMems).filter(id => !knownRoomIds.includes(id) && roomMems[id].length > 0);
-  const roomMemCount = Object.values(roomMems).reduce((a, arr) => a + arr.length, 0);
+  const roomMemCount = Object.values(roomMems).reduce((a, arr) => a + arr.filter(m => !m.archived).length, 0);
   const t = theme || THEMES.nagi;
   const ac = t.accent, acl = t.accentLight;
   const iconBtnStyle = { background:"none",border:"none",cursor:"pointer",padding:"5px",display:"flex",flexShrink:0 };
@@ -2717,7 +2732,7 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
           <div style={{ marginTop:"22px",paddingBottom:"8px" }}>
             <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"4px" }}>
               <h3 style={{ margin:0,fontSize:"14px",color:"#e4e4e7",fontFamily:FONT,fontWeight:700,display:"flex",alignItems:"center",gap:"6px" }}><BrainIcon color={ac} size={15} />メモリー</h3>
-              <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{mems.length + (hasRooms && mScope === "room" ? roomMemCount : 0)}件</span>
+              <span style={{ fontSize:"10px",color:"#52525b",fontFamily:FONT }}>{activeItems("").length + (hasRooms && mScope === "room" ? roomMemCount : 0)}件</span>
             </div>
             <div style={{ fontSize:"11px",color:"#52525b",lineHeight:"1.6",marginBottom:"12px",fontFamily:FONT }}>キャラが会話中に「覚えておきたい」と申請し、承認した内容がここに貯まります。手動で追加することもできます。追加・ON/OFF・編集・削除は次の新しいスレッドから反映されます</div>
             <div onClick={() => setMemOn(v => !v)} style={{ display:"flex",alignItems:"center",gap:"12px",padding:"11px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",marginBottom:"10px" }}>
@@ -2787,11 +2802,50 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                       onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
                       <PenIcon color={`${ac}66`} size={14} />
                     </button>
+                    <button onClick={() => updateBucket(bucket, arr => arr.map(x => x.id === m.id ? { ...x, archived:true, archivedAt:Date.now() } : x))} title="アーカイブ" style={iconBtnStyle}
+                      onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
+                      <ArchiveIcon color={`${ac}66`} size={14} />
+                    </button>
                     <button onClick={() => setConfirmDel({ type:"mem", bucket, id: m.id, text: m.text })} title="削除" style={iconBtnStyle}
                       onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
                       <XIcon color={`${ac}66`} size={14} />
                     </button>
                   </div>
+                  );
+                };
+                const restoreMem = (m, bucket) => updateBucket(bucket, arr => arr.map(x => {
+                  if (x.id !== m.id) return x;
+                  const { archived, archivedAt, ...rest } = x;
+                  return rest;
+                }));
+                const renderArchived = bucket => {
+                  const items = archivedItems(bucket);
+                  if (items.length === 0) return null;
+                  const open = !!openArchives[bucket];
+                  return (
+                    <div key={"archive:" + bucket} style={{ display:"flex",flexDirection:"column",gap:"6px" }}>
+                      <button onClick={() => setOpenArchives(prev => ({ ...prev, [bucket]: !open }))}
+                        style={{ display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"6px 4px",background:"none",border:"none",cursor:"pointer",fontFamily:FONT }}>
+                        <span style={{ fontSize:"11.5px",fontWeight:700,color:acl,fontFamily:FONT,display:"flex",alignItems:"center",gap:"5px" }}>
+                          <ArchiveIcon color={acl} size={12} />アーカイブ（{items.length}件）
+                        </span>
+                        <span style={{ fontSize:"14px",color:"#52525b",lineHeight:1,display:"inline-block",transform:open ? "rotate(90deg)" : "none",transition:"transform 0.2s" }}>›</span>
+                      </button>
+                      {open && items.map(m => (
+                        <div key={m.id} style={{ display:"flex",alignItems:"flex-start",gap:"8px",padding:"10px 12px",borderRadius:"16px",background:"rgba(255,255,255,0.02)",border:"1.5px solid rgba(255,255,255,0.06)",opacity:0.55 }}>
+                          <div style={{ flex:1,minWidth:0 }}>
+                            <div style={{ fontSize:"12.5px",color:"#e4e4e7",lineHeight:"1.7",fontFamily:FONT,whiteSpace:"pre-wrap",wordBreak:"break-word" }}>{m.text}</div>
+                            {m.archivedAt && <div style={{ fontSize:"9.5px",color:"#71717a",fontFamily:FONT,marginTop:"4px" }}>{fDate(m.archivedAt)} にアーカイブ</div>}
+                          </div>
+                          <button onClick={() => restoreMem(m, bucket)} title="復元"
+                            style={{ flexShrink:0,padding:"4px 10px",borderRadius:"10px",border:`1px solid ${ac}40`,background:"transparent",color:acl,fontSize:"11px",cursor:"pointer",fontFamily:FONT }}>復元</button>
+                          <button onClick={() => setConfirmDel({ type:"mem", bucket, id: m.id, text: m.text })} title="完全削除" style={iconBtnStyle}
+                            onMouseEnter={ev => ev.currentTarget.querySelector('svg').style.stroke = ac} onMouseLeave={ev => ev.currentTarget.querySelector('svg').style.stroke = `${ac}66`}>
+                            <XIcon color={`${ac}66`} size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   );
                 };
                 const renderAdd = bucket => {
@@ -2804,24 +2858,27 @@ function PromptEditor({ prompt, charName, charIcon, charAvatar, onSave, onClose,
                 };
                 const empty = text => <div style={{ fontSize:"11px",color:"#3f3f46",textAlign:"center",padding:"12px",fontFamily:FONT,borderRadius:"14px",border:"1px dashed rgba(255,255,255,0.06)" }}>{text}</div>;
                 if (!(hasRooms && mScope === "room")) {
-                  return <>{mems.length === 0 && empty("まだ覚えていることはありません")}{mems.map(m => renderItem(m, ""))}{renderAdd("")}</>;
+                  return <>{activeItems("").length === 0 && empty("まだ覚えていることはありません")}{activeItems("").map(m => renderItem(m, ""))}{renderAdd("")}{renderArchived("")}</>;
                 }
                 return (
                   <>
-                    {groupTitle(<><GlobeIcon color={acl} size={12} />共通（全部屋）</>, mems.length)}
-                    {mems.length === 0 ? empty("共通の記憶はありません") : mems.map(m => renderItem(m, ""))}
+                    {groupTitle(<><GlobeIcon color={acl} size={12} />共通（全部屋）</>, activeItems("").length)}
+                    {activeItems("").length === 0 ? empty("共通の記憶はありません") : activeItems("").map(m => renderItem(m, ""))}
                     {renderAdd("")}
+                    {renderArchived("")}
                     {(rooms || []).map(r => (
                       <React.Fragment key={r.id}>
-                        {groupTitle(<><CloudIcon color={acl} size={12} />{r.name}</>, bucketItems(r.id).length)}
-                        {bucketItems(r.id).length === 0 ? empty("この部屋だけの記憶はありません") : bucketItems(r.id).map(m => renderItem(m, r.id))}
+                        {groupTitle(<><CloudIcon color={acl} size={12} />{r.name}</>, activeItems(r.id).length)}
+                        {activeItems(r.id).length === 0 ? empty("この部屋だけの記憶はありません") : activeItems(r.id).map(m => renderItem(m, r.id))}
                         {renderAdd(r.id)}
+                        {renderArchived(r.id)}
                       </React.Fragment>
                     ))}
                     {orphanRoomIds.map(id => (
                       <React.Fragment key={id}>
-                        {groupTitle("削除済みの部屋", bucketItems(id).length)}
-                        {bucketItems(id).map(m => renderItem(m, id))}
+                        {groupTitle("削除済みの部屋", activeItems(id).length)}
+                        {activeItems(id).map(m => renderItem(m, id))}
+                        {renderArchived(id)}
                       </React.Fragment>
                     ))}
                   </>
