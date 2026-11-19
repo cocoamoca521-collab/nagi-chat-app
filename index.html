@@ -898,8 +898,42 @@ function measureConvoBreakdown(conversations) {
     return { conv: c, chars: len(c) };
   });
   b.other = Math.max(0, b.total - b.content - b.thinking - b.images - b.generated - b.files);
+  b.otherFields = measureOtherFields(light, b.other);
   b.top = sizes.sort((x, y) => y.chars - x.chars).slice(0, 5);
   return b;
+}
+
+// 「その他」の中身を、いちばん外側のフィールド名ごとに数える（上の分類に入った分は除く）
+// 各フィールドは「"名前":値」の文字数。残り（括弧・区切りのカンマ）は1つにまとめる
+function measureOtherFields(light, otherTotal) {
+  const len = v => v === undefined ? 0 : JSON.stringify(v).length;
+  const previews = arr => (arr || []).reduce((n, x) => n + (x && x.preview ? len(x.preview) : 0), 0);
+  const counted = {
+    content: m => (m.content === null ? 0 : len(m.content)),
+    thinking: m => (m.thinking === null ? 0 : len(m.thinking)),
+    images: m => previews(m.images),
+    generatedImages: m => previews(m.generatedImages),
+    files: m => (m.files || []).reduce((n, f) => n + len(f.text), 0),
+  };
+  const fields = {};
+  const add = (label, n) => { if (n > 0) fields[label] = (fields[label] || 0) + n; };
+  light.forEach(c => {
+    Object.keys(c).forEach(k => {
+      if (c[k] === undefined) return;
+      if (k === "messages") { add("messages（会話直下）", len(k) + 1); return; }
+      add(k + "（会話直下）", len(k) + 1 + len(c[k]));
+    });
+    (c.messages || []).forEach(m => {
+      Object.keys(m).forEach(k => {
+        if (m[k] === undefined) return;
+        const own = len(k) + 1 + len(m[k]);
+        add(k, own - (counted[k] ? counted[k](m) : 0));
+      });
+    });
+  });
+  const listed = Object.values(fields).reduce((n, v) => n + v, 0);
+  add("（JSONの括弧・区切り）", otherTotal - listed);
+  return Object.entries(fields).map(([label, chars]) => ({ label, chars })).sort((x, y) => y.chars - x.chars).slice(0, 10);
 }
 
 // 会話を保存用に軽量化する（API用の重いデータを落とし、添付テキストを切り詰める）
@@ -2680,6 +2714,12 @@ function ConvoBreakdownRows({ b, storedChars }) {
     <>
       {rows.map(([label, n]) => (
         <div key={label} style={rowStyle}><span>{label}</span><span>{formatStorageSize(n)}</span></div>
+      ))}
+      {(b.otherFields || []).map(f => (
+        <div key={f.label} style={{ ...rowStyle,paddingLeft:"36px",fontSize:"9.5px" }}>
+          <span style={{ minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.label}：</span>
+          <span style={{ flexShrink:0 }}>{formatStorageSize(f.chars)}</span>
+        </div>
       ))}
       {unsaved > 1024 && (
         <div style={{ ...rowStyle,color:"#fca5a5",opacity:0.8 }}><span>画面の会話は、保存済みより{formatStorageSize(unsaved).replace("約 ", "約")}多い（まだ保存できていない分）</span></div>
