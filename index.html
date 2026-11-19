@@ -1066,15 +1066,21 @@ async function idbMigrateFromLocal(db, convos) {
 // mode: "idb"（新しい置き場） / "local"（今まで通り localStorage） / "broken"（新しい置き場が読めない。会話は保存しない）
 //       "lost"（引っ越し済みの印があるのに新しい置き場が空。自動では引っ越し直さず、どうするか選んでもらう）
 async function loadConvStore() {
-  let raw = null;
-  try { raw = localStorage.getItem(SK.convos); } catch {}
+  // 引っ越し済みかどうかは、新しい置き場を開く前に localStorage の印で確かめる
+  const mark = readMigratedMark();
   let db;
   try {
     db = await idbOpen();
   } catch (e) {
     console.error("IndexedDB open:", e);
+    if (mark) {
+      // 引っ越し済み：古い元データは引っ越した時点のものなので、読まないし書かない
+      return { mode: "broken", convos: null, error: "会話の置き場を開けませんでした。アプリを完全に閉じて、開き直してください。それまでの会話は保存されません。" };
+    }
     return { mode: "local", convos: sGet(SK.convos), error: "新しい置き場を開けませんでした（" + storageErrorText(e) + "）" };
   }
+  let raw = null;
+  try { raw = localStorage.getItem(SK.convos); } catch {}
   let stored;
   try {
     stored = await idbReadAll(db);
@@ -1083,7 +1089,6 @@ async function loadConvStore() {
     console.error("IndexedDB read:", e);
     return { mode: "broken", convos: null, error: "会話の置き場を読み込めませんでした（" + storageErrorText(e) + "）。開き直してください。それまでの会話は保存されません。" };
   }
-  const mark = readMigratedMark();
   if (stored.migratedAt) {
     // 引っ越しの時点で印を書けなかった（古い置き場が満杯だった）ときは、ここで書き直す
     if (!mark) writeMigratedMark(stored.migratedAt);
@@ -3729,7 +3734,7 @@ function NagiChat() {
           const { [key]: _, ...rest } = prev;
           return rest;
         }
-        return { ...prev, [key]: { quota: !!result.quota, message: result.message || "" } };
+        return { ...prev, [key]: { quota: !!result.quota, message: result.message || "", text: result.text || null } };
       });
     };
     return () => { storageResultListener = null; };
@@ -3851,7 +3856,7 @@ function NagiChat() {
       setConversations([f]); setActiveConvId(f.id);
     }
     if (store.mode === "broken" && storageResultListener) {
-      storageResultListener(SK.convos, { ok: false, quota: false, message: store.error });
+      storageResultListener(SK.convos, { ok: false, quota: false, message: store.error, text: store.error });
     }
     if (store.migrated) {
       showMemoryToast("会話を新しい置き場に移しました");
@@ -5315,6 +5320,11 @@ function NagiChat() {
   async function confirmRestore() {
     const data = restoreConfirm;
     setRestoreConfirm(null);
+    if (convModeRef.current === "broken") {
+      // 会話の置き場が開けないあいだは、古い置き場に会話を書いてしまわないよう復元しない
+      alert("会話の置き場を開けないため、いまは復元できません。アプリを完全に閉じて、開き直してから復元してください。");
+      return;
+    }
     // 会話が新しい置き場にあるときは、会話以外を localStorage に書いてから、会話を IndexedDB に入れる
     const lostMode = convModeRef.current === "lost" && !!convDbRef.current;
     const idbMode = (convModeRef.current === "idb" || lostMode) && !!convDbRef.current;
@@ -5434,11 +5444,11 @@ function NagiChat() {
         <div role="alert" style={{ padding:"9px 14px",background:"rgba(127,29,29,0.55)",borderBottom:"1px solid rgba(248,113,113,0.35)",backdropFilter:"blur(16px)",display:"flex",alignItems:"center",gap:"10px",fontFamily:FONT }}>
           <div style={{ flex:1,minWidth:0 }}>
             <div style={{ fontSize:"12px",color:"#fecaca",lineHeight:1.55 }}>
-              {saveFailure.quota
+              {saveFailure.text ? saveFailure.text : saveFailure.quota
                 ? "保存できませんでした。置き場がいっぱいです。いま見えている内容は、開き直すと消えます。設定からバックアップを書き出してください。"
                 : "保存できませんでした。いま見えている内容は、開き直すと消えるかもしれません。"}
             </div>
-            {!saveFailure.quota && saveFailure.message && <div style={{ fontSize:"10px",color:"#fca5a5",opacity:0.75,marginTop:"2px",wordBreak:"break-all" }}>{saveFailure.message}</div>}
+            {!saveFailure.text && !saveFailure.quota && saveFailure.message && <div style={{ fontSize:"10px",color:"#fca5a5",opacity:0.75,marginTop:"2px",wordBreak:"break-all" }}>{saveFailure.message}</div>}
           </div>
           <button onClick={openSettingsFromNotice} style={{ flexShrink:0,padding:"6px 10px",borderRadius:"10px",border:`1px solid ${theme.accent}40`,background:`${theme.accent}14`,color:theme.accentLight,fontSize:"11px",cursor:"pointer",fontFamily:FONT,fontWeight:600,whiteSpace:"nowrap" }}>設定を開く</button>
         </div>
