@@ -881,6 +881,27 @@ function formatStorageSize(chars) {
   return "約 " + Math.ceil(chars / 1024) + "KB";
 }
 
+// 会話の中身ごとの文字数（保存される形＝toLightConvos 後のJSONで数える）
+function measureConvoBreakdown(conversations) {
+  const len = v => (v === undefined || v === null) ? 0 : JSON.stringify(v).length;
+  const b = { total: 0, content: 0, thinking: 0, images: 0, imageCount: 0, generated: 0, generatedCount: 0, files: 0, other: 0, top: [] };
+  const light = toLightConvos(conversations || []);
+  b.total = len(light);
+  const sizes = light.map(c => {
+    (c.messages || []).forEach(m => {
+      b.content += len(m.content);
+      b.thinking += len(m.thinking);
+      (m.images || []).forEach(img => { if (img.preview) { b.images += len(img.preview); b.imageCount++; } });
+      (m.generatedImages || []).forEach(img => { if (img.preview) { b.generated += len(img.preview); b.generatedCount++; } });
+      (m.files || []).forEach(f => { b.files += len(f.text); });
+    });
+    return { conv: c, chars: len(c) };
+  });
+  b.other = Math.max(0, b.total - b.content - b.thinking - b.images - b.generated - b.files);
+  b.top = sizes.sort((x, y) => y.chars - x.chars).slice(0, 5);
+  return b;
+}
+
 // 会話を保存用に軽量化する（API用の重いデータを落とし、添付テキストを切り詰める）
 function toLightConvos(conversations) {
   return conversations.map(c => ({
@@ -2408,12 +2429,13 @@ const inputStyle = { width:"100%",padding:"11px 14px",borderRadius:"14px",border
 const closeBtnStyle = { background:"none",border:"none",cursor:"pointer",padding:"4px 6px",display:"flex",alignItems:"center",justifyContent:"center" };
 
 // ═══ Settings Panel ═══
-function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }) {
+function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore, conversations }) {
   const [s, setS] = useState({ ...settings });
   const up = (k, v) => setS(prev => ({ ...prev, [k]: v }));
   const t = theme || THEMES.nagi;
   const restoreRef = useRef(null);
   const [usage] = useState(() => measureStorage()); // 開いたときに1回だけ測る
+  const [convoBreakdown] = useState(() => measureConvoBreakdown(conversations));
   const MODEL_GROUPS = [
     { label: "Fable", models: MODELS.filter(m => m.id.includes("fable")) },
     { label: "Opus", models: MODELS.filter(m => m.id.includes("opus")) },
@@ -2581,7 +2603,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
           <input ref={restoreRef} type="file" accept=".json" onChange={e => { if (e.target.files?.[0]) onRestore(e.target.files[0]); e.target.value=""; }} style={{ display:"none" }} />
         </div>
         <div style={{ fontSize:"9px",color:"#3f3f46",marginTop:"6px",fontFamily:FONT }}>全会話・設定・記憶をJSONで書き出し／読み込み</div>
-        <StorageUsageMeter usage={usage} theme={t} />
+        <StorageUsageMeter usage={usage} convoBreakdown={convoBreakdown} theme={t} />
 
         <div style={{ display:"flex",gap:"8px",marginTop:"24px" }}>
           <button onClick={onClose} style={btnSec}>キャンセル</button>
@@ -2593,7 +2615,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
 }
 
 // ═══ 置き場の使用量（設定パネル内）═══
-function StorageUsageMeter({ usage, theme }) {
+function StorageUsageMeter({ usage, convoBreakdown, theme }) {
   const t = theme || THEMES.nagi;
   const rowStyle = { display:"flex",justifyContent:"space-between",gap:"8px",fontSize:"11px",fontFamily:FONT,lineHeight:1.7 };
   const mb = formatStorageSize;
@@ -2624,15 +2646,67 @@ function StorageUsageMeter({ usage, theme }) {
             <div style={{ marginTop:"10px" }}>
               <div style={{ ...rowStyle,color:"#a1a1aa" }}><span>nagiChat</span><span>{mb(usage.nagi)}（{pct(usage.nagi)}）</span></div>
               {parts.map(([label, n]) => (
-                <div key={label} style={{ ...rowStyle,color:"#71717a",paddingLeft:"12px" }}><span>{label}</span><span>{mb(n)}</span></div>
+                <React.Fragment key={label}>
+                  <div style={{ ...rowStyle,color:"#71717a",paddingLeft:"12px" }}><span>{label}</span><span>{mb(n)}</span></div>
+                  {label === "会話" && convoBreakdown && <ConvoBreakdownRows b={convoBreakdown} storedChars={n} />}
+                </React.Fragment>
               ))}
               <div style={{ ...rowStyle,color:"#a1a1aa" }}><span>それ以外（同じ置き場の他のアプリ）</span><span>{mb(usage.others)}（{pct(usage.others)}）</span></div>
             </div>
+            {convoBreakdown && convoBreakdown.top.length > 0 && <ConvoTopList top={convoBreakdown.top} />}
             <div style={{ fontSize:"10px",color:"#71717a",fontFamily:FONT,marginTop:"8px",lineHeight:1.5 }}>同じ場所に置いた他のアプリ（栞など）と、この容量を分け合っています</div>
             <div style={{ fontSize:"9px",color:"#52525b",fontFamily:FONT,marginTop:"2px",lineHeight:1.5 }}>キーと値の文字数の合計から出した目安です。実際の上限はブラウザによって違います</div>
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// 「会話」の中身の内訳（画面の状態を保存される形にして数える）
+function ConvoBreakdownRows({ b, storedChars }) {
+  const rowStyle = { display:"flex",justifyContent:"space-between",gap:"8px",fontSize:"10px",fontFamily:FONT,lineHeight:1.7,color:"#52525b",paddingLeft:"24px" };
+  const rows = [
+    ["本文", b.content],
+    ["思考", b.thinking],
+    ["貼った画像（" + b.imageCount + "枚）", b.images],
+    ["生成画像（" + b.generatedCount + "枚）", b.generated],
+    ["添付ファイルの文字", b.files],
+    ["その他（時刻・使用量などの付帯情報）", b.other],
+  ];
+  // 保存済みの会話より画面の会話の方が大きい＝保存できていない分がある
+  const unsaved = storedChars > 0 ? b.total + SK.convos.length - storedChars : 0;
+  return (
+    <>
+      {rows.map(([label, n]) => (
+        <div key={label} style={rowStyle}><span>{label}</span><span>{formatStorageSize(n)}</span></div>
+      ))}
+      {unsaved > 1024 && (
+        <div style={{ ...rowStyle,color:"#fca5a5",opacity:0.8 }}><span>画面の会話は、保存済みより{formatStorageSize(unsaved).replace("約 ", "約")}多い（まだ保存できていない分）</span></div>
+      )}
+    </>
+  );
+}
+
+// 大きい会話 上位5件
+function ConvoTopList({ top }) {
+  const pad = n => String(n).padStart(2, "0");
+  const dateOf = ts => { const d = new Date(ts); return isNaN(d) ? "" : d.getFullYear() + "/" + pad(d.getMonth() + 1) + "/" + pad(d.getDate()); };
+  return (
+    <div style={{ marginTop:"10px" }}>
+      <div style={{ fontSize:"11px",color:"#a1a1aa",fontFamily:FONT,lineHeight:1.7 }}>大きい会話 上位5件</div>
+      {top.map(({ conv, chars }) => {
+        const opening = (conv.messages || []).find(m => m.role === "user" && typeof m.content === "string" && m.content)?.content || "";
+        return (
+          <div key={conv.id} style={{ display:"flex",justifyContent:"space-between",gap:"8px",fontSize:"10px",fontFamily:FONT,lineHeight:1.7,color:"#71717a",paddingLeft:"12px" }}>
+            <span style={{ minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>
+              {(conv.charName || conv.charId || "会話") + " " + dateOf(conv.createdAt)}
+              {opening && <span style={{ color:"#52525b" }}>{"　" + opening.slice(0, 14)}</span>}
+            </span>
+            <span style={{ flexShrink:0 }}>{chars.toLocaleString()}文字</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -4888,7 +4962,7 @@ function NagiChat() {
       )}
     </div>
   ) : null;
-  const settingsPanel = showSettings ? <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); setSettingsFromNotice(false); }} onClose={() => { if (settings.apiKey) { setShowSettings(false); setSettingsFromNotice(false); } }} theme={theme} onBackup={handleBackup} onRestore={handleRestore} /> : null;
+  const settingsPanel = showSettings ? <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); setSettingsFromNotice(false); }} onClose={() => { if (settings.apiKey) { setShowSettings(false); setSettingsFromNotice(false); } }} theme={theme} onBackup={handleBackup} onRestore={handleRestore} conversations={conversations} /> : null;
   const restoreConfirmDialog = restoreConfirm ? (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
           <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5)`,textAlign:"center" }}>
