@@ -942,7 +942,16 @@ const IDB_NAME = "nagichat";
 const IDB_VERSION = 1;
 const IDB_CONVOS = "convos";
 const IDB_META = "meta";
-const CONV_SAVE_DELAY = 500; // ストリーミング中など更新が続くときに、まとめて書くまでの間隔（ms）
+const CONV_SAVE_DELAY = 500;
+// 引っ越しが済んだ印（localStorage 側）。新しい置き場が丸ごと消えたことに気づくために使う。「古い元データを消す」でも消さない
+const MIGRATED_MARK_KEY = "nagichat-convos-migrated-at";
+function readMigratedMark() {
+  try { const v = localStorage.getItem(MIGRATED_MARK_KEY); return v ? Number(v) || v : null; } catch { return null; }
+}
+function writeMigratedMark(at) {
+  try { localStorage.setItem(MIGRATED_MARK_KEY, String(at)); return true; }
+  catch (e) { console.error("Migration mark:", e); return false; }
+} // ストリーミング中など更新が続くときに、まとめて書くまでの間隔（ms）
 
 function storageErrorText(e) {
   if (!e) return "不明なエラー";
@@ -1011,12 +1020,14 @@ function orderConvos(convos, order) {
 }
 
 // 会話を全部入れ替える（1つのトランザクション。失敗したら全部元のまま）
-function idbReplaceConvos(db, convos) {
+// migratedAt を渡すと、同じトランザクションで引っ越し済みの印も書く（消えた置き場を立て直すとき）
+function idbReplaceConvos(db, convos, migratedAt) {
   return idbRun(db, [IDB_CONVOS, IDB_META], "readwrite", tx => {
     const store = tx.objectStore(IDB_CONVOS);
     store.clear();
     convos.forEach(c => store.put(c));
     tx.objectStore(IDB_META).put(convos.map(c => c.id), "order");
+    if (migratedAt) tx.objectStore(IDB_META).put(migratedAt, "migratedAt");
   });
 }
 
@@ -1046,11 +1057,14 @@ async function idbMigrateFromLocal(db, convos) {
     if (!r || JSON.stringify(r) !== JSON.stringify(c)) throw new Error("中身が一致しない会話があります");
   }
   if (JSON.stringify(back.order) !== JSON.stringify(order)) throw new Error("並び順が一致しません");
-  await idbRun(db, [IDB_META], "readwrite", tx => { tx.objectStore(IDB_META).put(Date.now(), "migratedAt"); });
+  const migratedAt = Date.now();
+  await idbRun(db, [IDB_META], "readwrite", tx => { tx.objectStore(IDB_META).put(migratedAt, "migratedAt"); });
+  return migratedAt;
 }
 
 // 起動時：会話をどこから読み、どこへ保存するかを決める
 // mode: "idb"（新しい置き場） / "local"（今まで通り localStorage） / "broken"（新しい置き場が読めない。会話は保存しない）
+//       "lost"（引っ越し済みの印があるのに新しい置き場が空。自動では引っ越し直さず、どうするか選んでもらう）
 async function loadConvStore() {
   let raw = null;
   try { raw = localStorage.getItem(SK.convos); } catch {}
@@ -1069,21 +1083,32 @@ async function loadConvStore() {
     console.error("IndexedDB read:", e);
     return { mode: "broken", convos: null, error: "会話の置き場を読み込めませんでした（" + storageErrorText(e) + "）。開き直してください。それまでの会話は保存されません。" };
   }
-  if (stored.migratedAt) return { mode: "idb", db, convos: orderConvos(stored.convos, stored.order) };
+  const mark = readMigratedMark();
+  if (stored.migratedAt) {
+    // 引っ越しの時点で印を書けなかった（古い置き場が満杯だった）ときは、ここで書き直す
+    if (!mark) writeMigratedMark(stored.migratedAt);
+    return { mode: "idb", db, convos: orderConvos(stored.convos, stored.order) };
+  }
+  if (mark) {
+    console.error("[STORAGE] Migration mark exists but IndexedDB has no migratedAt: conversations store is gone");
+    return { mode: "lost", db, convos: null, lostMarkAt: mark, hasLegacy: raw !== null };
+  }
 
   const convos = raw === null ? [] : sGet(SK.convos);
   if (!Array.isArray(convos)) {
     return { mode: "local", convos, error: "会話の引っ越しができませんでした（元の会話データを読めませんでした）" };
   }
   const startedAt = performance.now();
+  let migratedAt;
   try {
-    await idbMigrateFromLocal(db, convos);
+    migratedAt = await idbMigrateFromLocal(db, convos);
   } catch (e) {
     console.error("Conversation migration:", e);
     try { await idbClearAll(db); } catch (e2) { console.error("IndexedDB clear:", e2); }
     return { mode: "local", convos, error: "会話の引っ越しができませんでした（" + storageErrorText(e) + "）" };
   }
   const ms = Math.round(performance.now() - startedAt);
+  writeMigratedMark(migratedAt); // 失敗しても引っ越しは成功として続ける
   console.log("[STORAGE] Migrated " + convos.length + " conversations to IndexedDB in " + ms + "ms");
   return { mode: "idb", db, convos, migrated: convos.length > 0, migrateMs: ms };
 }
@@ -3612,6 +3637,9 @@ function NagiChat() {
   const [storageWarn90Dismissed, setStorageWarn90Dismissed] = useState(false); // 次に会話を開くまで出さない
   const [settingsFromNotice, setSettingsFromNotice] = useState(false); // トップ・部屋選択の画面から設定を開いた
   const [convStore, setConvStore] = useState({ mode: "pending", error: null }); // 会話の置き場（設定パネルの表示用）
+  const [lostStore, setLostStore] = useState(null); // 新しい置き場が消えていたとき { markAt, hasLegacy }
+  const [lostBusy, setLostBusy] = useState(false);
+  const lostRestoreRef = useRef(null);
   const [storageEstimatePercent, setStorageEstimatePercent] = useState(null); // navigator.storage.estimate() の割合
   // ── 会話の保存（IndexedDB）：前回保存した会話の参照をidごとに控え、変わったものだけ書く ──
   const convModeRef = useRef("pending");
@@ -3789,6 +3817,7 @@ function NagiChat() {
     convDbRef.current = store.db || null;
     convModeRef.current = store.mode;
     setConvStore({ mode: store.mode, error: store.error || null });
+    if (store.mode === "lost") setLostStore({ markAt: store.lostMarkAt, hasLegacy: store.hasLegacy });
     // 読み込んだそのままのオブジェクトを控えにする。下の移行処理で変わった会話だけが、最初の保存で書かれる
     if (store.mode === "idb") setConvBaseline(store.convos);
     const sc = store.convos, ss = sGet(SK.settings), sch = sGet(SK.chars), sp = sGet(SK.profile);
@@ -3828,7 +3857,8 @@ function NagiChat() {
       showMemoryToast("会話を新しい置き場に移しました");
       try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch {}
     }
-    setInitialized(true);
+    // 新しい置き場が消えていたときは、どうするか選ぶまで initialized を立てない（どこにも書かない）
+    if (store.mode !== "lost") setInitialized(true);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -5208,6 +5238,59 @@ function NagiChat() {
     reader.readAsText(file);
   }
 
+  // ── 新しい置き場が消えていたときの立て直し ──
+  // 印は書き換えない（古い元データがいつ時点のものかを、最初の引っ越しの時刻で残しておく）
+  function finishLostRecovery() {
+    convModeRef.current = "idb";
+    setConvStore({ mode: "idb", error: null });
+    setLostStore(null);
+  }
+  function applyRecoveredConvos(raw) {
+    const list = raw.map(migrateSummary);
+    setConvBaseline(raw);
+    latestConvsRef.current = list;
+    if (list.length > 0) {
+      setConversations(list);
+      const nc = list.filter(c => c.charId === "nagi");
+      setActiveConvId(nc.length > 0 ? nc[0].id : list[0].id);
+    }
+  }
+  async function recoverFromLegacy() {
+    const db = convDbRef.current;
+    const legacy = sGet(SK.convos);
+    if (!db || !Array.isArray(legacy)) { alert("古い元データを読めませんでした。バックアップから復元してください。"); return; }
+    setLostBusy(true);
+    try {
+      const at = await idbMigrateFromLocal(db, legacy);
+      finishLostRecovery();
+      applyRecoveredConvos(legacy);
+      setInitialized(true);
+      showMemoryToast("古い元データから戻しました");
+    } catch (e) {
+      console.error("Recover from legacy:", e);
+      try { await idbClearAll(db); } catch {}
+      alert("戻せませんでした（" + storageErrorText(e) + "）。バックアップから復元してください。");
+    }
+    setLostBusy(false);
+  }
+  async function startEmptyAfterLoss() {
+    const db = convDbRef.current;
+    if (!db) return;
+    if (!window.confirm("空のまま始めますか？ 消えた会話は、あとからバックアップで復元できます。")) return;
+    setLostBusy(true);
+    try {
+      const at = Date.now();
+      await idbReplaceConvos(db, [], at);
+      finishLostRecovery();
+      setConvBaseline([]);
+      setInitialized(true); // 起動時に作った空の会話は、この後の保存で書かれる
+    } catch (e) {
+      console.error("Start empty:", e);
+      alert("始められませんでした（" + storageErrorText(e) + "）");
+    }
+    setLostBusy(false);
+  }
+
   // 復元前に控えた値（生の文字列）へ書き戻す。書き戻しに失敗したキーは保存失敗として知らせる
   function rollbackStorage(original) {
     const keys = Object.keys(original);
@@ -5233,8 +5316,13 @@ function NagiChat() {
     const data = restoreConfirm;
     setRestoreConfirm(null);
     // 会話が新しい置き場にあるときは、会話以外を localStorage に書いてから、会話を IndexedDB に入れる
-    const idbMode = convModeRef.current === "idb" && !!convDbRef.current;
+    const lostMode = convModeRef.current === "lost" && !!convDbRef.current;
+    const idbMode = (convModeRef.current === "idb" || lostMode) && !!convDbRef.current;
     const restoringConvos = data[SK.convos] !== undefined;
+    if (lostMode && !restoringConvos) {
+      alert("このバックアップには会話が入っていません。会話の入ったバックアップを選んでください。");
+      return;
+    }
     if (restoringConvos && !Array.isArray(data[SK.convos])) {
       alert("復元できませんでした（会話データの形が正しくありません）。データは復元前の状態のままです。");
       return;
@@ -5256,7 +5344,9 @@ function NagiChat() {
     if (!failure && idbMode && restoringConvos) {
       convRestoringRef.current = true;
       try {
-        await idbReplaceConvos(convDbRef.current, toLightConvos(data[SK.convos]));
+        const rebuiltAt = lostMode ? Date.now() : undefined;
+        await idbReplaceConvos(convDbRef.current, toLightConvos(data[SK.convos]), rebuiltAt);
+        if (lostMode) finishLostRecovery();
       } catch (e) {
         console.error("Restore (IndexedDB):", e);
         failure = { ok: false, quota: isQuotaError(e), message: storageErrorText(e) };
@@ -5307,6 +5397,7 @@ function NagiChat() {
       setSettingsFromNotice(false);
       setStorageCheckTick(n => n + 1);
       showMemoryToast("復元しました");
+      if (lostMode) setInitialized(true);
       console.log("[BACKUP] Restored successfully");
     } catch (err) {
       alert("復元中にエラーが発生しました: " + err.message);
@@ -5378,11 +5469,32 @@ function NagiChat() {
           </div>
         </div>
   ) : null;
+  const lostDate = lostStore && lostStore.markAt ? (() => { const d = new Date(lostStore.markAt); return isNaN(d) ? "" : (d.getMonth() + 1) + "月" + d.getDate() + "日"; })() : "";
+  const lostBtn = primary => ({ width:"100%",padding:"12px",borderRadius:"14px",border:primary ? "none" : "1px solid rgba(255,255,255,0.1)",background:primary ? theme.userGradient : "rgba(255,255,255,0.03)",color:primary ? "#fff" : "#d4d4d8",fontSize:"13px",cursor:lostBusy ? "wait" : "pointer",fontFamily:FONT,fontWeight:600,opacity:lostBusy ? 0.6 : 1 });
+  const lostDialog = lostStore ? (
+    <div role="alertdialog" style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(10px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:150 }}>
+      <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"26px 22px",width:"min(360px, 88vw)",border:"1px solid rgba(248,113,113,0.3)",boxShadow:"0 20px 60px rgba(0,0,0,0.5)" }}>
+        <div style={{ fontSize:"15px",color:"#fecaca",fontFamily:FONT,fontWeight:700,marginBottom:"10px" }}>会話のデータが見つかりません</div>
+        <div style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT,lineHeight:1.7,marginBottom:"20px" }}>
+          {lostStore.hasLegacy
+            ? "新しい置き場の会話が消えています。古い元データ（引っ越した" + lostDate + "時点）から戻すか、バックアップから復元してください。"
+            : "会話のデータが消えています。バックアップから復元してください。"}
+        </div>
+        <div style={{ display:"flex",flexDirection:"column",gap:"8px" }}>
+          {lostStore.hasLegacy && <button disabled={lostBusy} onClick={recoverFromLegacy} style={lostBtn(true)}>古い元データから戻す</button>}
+          <button disabled={lostBusy} onClick={() => lostRestoreRef.current?.click()} style={lostBtn(!lostStore.hasLegacy)}>バックアップから復元</button>
+          {!lostStore.hasLegacy && <button disabled={lostBusy} onClick={startEmptyAfterLoss} style={lostBtn(false)}>空のまま始める</button>}
+        </div>
+        <input ref={lostRestoreRef} type="file" accept=".json" onChange={e => { if (e.target.files?.[0]) handleRestore(e.target.files[0]); e.target.value = ""; }} style={{ display:"none" }} />
+      </div>
+    </div>
+  ) : null;
   // トップ・部屋選択の画面では、帯を上に重ねて出す（設定はそこから開いたときだけ出す）
   const outsideChatOverlays = (
     <>
       {storageNotices && <div style={{ position:"fixed",top:0,left:0,right:0,zIndex:90 }}>{storageNotices}</div>}
       {settingsFromNotice && settingsPanel}
+      {lostDialog}
       {restoreConfirmDialog}
       {memoryToast && (
         <div key={memoryToast.key} style={{ position:"fixed",left:"50%",bottom:"92px",zIndex:40,padding:"9px 16px",borderRadius:"16px",background:"rgba(21,18,27,0.92)",border:`1px solid ${theme.accent}45`,boxShadow:`0 6px 24px rgba(0,0,0,0.45), 0 0 18px ${theme.accent}30`,color:theme.accentLight,fontSize:"12px",fontFamily:FONT,whiteSpace:"nowrap",pointerEvents:"none",transform:"translateX(-50%)",animation:"nagiToastIn 2.2s ease-out both" }}>
@@ -5400,6 +5512,7 @@ function NagiChat() {
       <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} room={activeRoom} onSwitchRoom={() => { setSidebarOpen(false); setScreen("rooms"); }} />
 
       {settingsPanel}
+      {lostDialog}
       {restoreConfirmDialog}
       {showPromptEditor === "char" && <PromptEditor prompt={activeChar.prompt} charName={activeCharId==="plain" ? "共通" : activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} lorebook={activeChar.lorebook || []} profileMode={activeChar.profileMode || "common"} customProfile={activeChar.customProfile || ""} memoryEnabled={!!activeChar.memoryEnabled} memories={activeChar.memories || []} memoryScope={activeChar.memoryScope || "char"} roomMemories={normalizeRoomMemories(activeChar.roomMemories)} rooms={activeCharId === "plain" ? rooms : null} onSave={(p, lb, pm, cp, me, mems, ms, rms) => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p,lorebook:lb,profileMode:pm,customProfile:cp,memoryEnabled:me,memories:mems,memoryScope:ms,roomMemories:rms}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showPromptEditor === "room" && activeRoom && <PromptEditor prompt={activeRoom.roomPrompt} charName={activeRoom.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { handleSaveRoom(activeRoom, { roomPrompt:p }); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
