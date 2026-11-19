@@ -936,6 +936,33 @@ function measureOtherFields(light, otherTotal) {
   return Object.entries(fields).map(([label, chars]) => ({ label, chars })).sort((x, y) => y.chars - x.chars).slice(0, 10);
 }
 
+// ── バックアップしていない会話 ──
+// 最後にバックアップした時刻と、催促を×で閉じたときの往復数。どちらもバックアップのファイルには入れない
+const LAST_BACKUP_KEY = "nagichat-last-backup-at";
+const BACKUP_NUDGE_DISMISSED_KEY = "nagichat-backup-nudge-dismissed";
+const BACKUP_NUDGE_ROUNDS = 30;
+
+// 1往復＝返事が完了したアシスタントの発言1件。ストリーミング途中・空・エラーの発言は数えない
+function isCompletedReply(m) {
+  if (!m || m.role !== "assistant" || m._streaming || m.errorType) return false;
+  const hasText = typeof m.content === "string" ? m.content.trim() !== "" : Array.isArray(m.content) && m.content.length > 0;
+  return hasText || (Array.isArray(m.generatedImages) && m.generatedImages.length > 0);
+}
+// since が null（一度もバックアップしていない）なら全部を数える。時刻の無い古い発言は、バックアップ済みとみなす
+function countUnbackedRounds(conversations, since) {
+  let rounds = 0, convs = 0;
+  (conversations || []).forEach(c => {
+    let n = 0;
+    (c.messages || []).forEach(m => {
+      if (!isCompletedReply(m)) return;
+      if (since !== null && !(typeof m.timestamp === "number" && m.timestamp > since)) return;
+      n++;
+    });
+    if (n > 0) { rounds += n; convs++; }
+  });
+  return { rounds, convs };
+}
+
 // ── 会話の置き場（IndexedDB）──
 // convos: キーは会話のid、値は軽量化済みの会話1件 / meta: "order"（idの並び）と "migratedAt"（引っ越し完了時刻）
 const IDB_NAME = "nagichat";
@@ -2645,7 +2672,7 @@ const inputStyle = { width:"100%",padding:"11px 14px",borderRadius:"14px",border
 const closeBtnStyle = { background:"none",border:"none",cursor:"pointer",padding:"4px 6px",display:"flex",alignItems:"center",justifyContent:"center" };
 
 // ═══ Settings Panel ═══
-function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore, conversations, convStore, onLegacyRemoved }) {
+function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore, conversations, convStore, onLegacyRemoved, backupStatus }) {
   const [s, setS] = useState({ ...settings });
   const up = (k, v) => setS(prev => ({ ...prev, [k]: v }));
   const t = theme || THEMES.nagi;
@@ -2831,6 +2858,15 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore, 
           <input ref={restoreRef} type="file" accept=".json" onChange={e => { if (e.target.files?.[0]) onRestore(e.target.files[0]); e.target.value=""; }} style={{ display:"none" }} />
         </div>
         <div style={{ fontSize:"9px",color:"#3f3f46",marginTop:"6px",fontFamily:FONT }}>全会話・設定・記憶をJSONで書き出し／読み込み</div>
+        {backupStatus && (
+          <div style={{ fontSize:"11px",color:backupStatus.rounds > 0 ? t.accentLight : "#71717a",marginTop:"6px",fontFamily:FONT }}>
+            {backupStatus.never
+              ? "まだバックアップしていません（" + backupStatus.convs + "件・" + backupStatus.rounds + "往復）"
+              : backupStatus.rounds === 0
+                ? "バックアップは最新です"
+                : "バックアップしていない会話：" + backupStatus.convs + "件・" + backupStatus.rounds + "往復"}
+          </div>
+        )}
         <StorageUsageMeter usage={usage} convoBreakdown={convoBreakdown} convStore={convStore} onRemoveLegacy={removeLegacyConvos} theme={t} />
 
         <div style={{ display:"flex",gap:"8px",marginTop:"24px" }}>
@@ -3642,6 +3678,8 @@ function NagiChat() {
   const [storageWarn90Dismissed, setStorageWarn90Dismissed] = useState(false); // 次に会話を開くまで出さない
   const [settingsFromNotice, setSettingsFromNotice] = useState(false); // トップ・部屋選択の画面から設定を開いた
   const [convStore, setConvStore] = useState({ mode: "pending", error: null }); // 会話の置き場（設定パネルの表示用）
+  const [backupStatus, setBackupStatus] = useState(null); // { rounds, convs, never }
+  const [backupCheckTick, setBackupCheckTick] = useState(0);
   const [lostStore, setLostStore] = useState(null); // 新しい置き場が消えていたとき { markAt, hasLegacy }
   const [lostBusy, setLostBusy] = useState(false);
   const lostRestoreRef = useRef(null);
@@ -3898,6 +3936,13 @@ function NagiChat() {
     return () => { cancelled = true; };
   }, [openedConvKey, initialized, storageCheckTick]);
   useEffect(() => { if (openedConvKey) setStorageWarn90Dismissed(false); }, [openedConvKey]);
+  // バックアップしていない往復を数え直す：起動時・会話を開いたとき・返事が完了したとき・設定を開いたとき・バックアップと復元の後
+  useEffect(() => {
+    if (!initialized || loading) return;
+    const since = sGet(LAST_BACKUP_KEY);
+    const count = countUnbackedRounds(conversations, typeof since === "number" ? since : null);
+    setBackupStatus({ ...count, never: typeof since !== "number" });
+  }, [initialized, openedConvKey, loading, showSettings, backupCheckTick]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [conversations, loading]);
 
   // ── スレッドごとにモデルを復元（プレーンさんの新規スレは部屋のデフォルトモデルにフォールバック）──
@@ -5214,14 +5259,22 @@ function NagiChat() {
     const blob = new Blob([json], { type: "application/json" });
     const file = new File([blob], fileName, { type: "application/json" });
     if (navigator.share) {
-      try { await navigator.share({ title: "ナギChat バックアップ", files: [file] }); return; }
-      catch (err) { if (err.name === "AbortError") return; }
+      try { await navigator.share({ title: "ナギChat バックアップ", files: [file] }); markBackedUp(); return; }
+      catch (err) { if (err.name === "AbortError") return; } // 共有シートを閉じた・保存をやめた
     }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = fileName;
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
+    markBackedUp();
+  }
+
+  // 画面の中身がバックアップ（またはファイル）と同じになった時刻を控え、催促の控えを消す
+  function markBackedUp() {
+    sSet(LAST_BACKUP_KEY, Date.now()); // 失敗しても書き出しは成功として扱う（保存失敗の帯に任せる）
+    try { localStorage.removeItem(BACKUP_NUDGE_DISMISSED_KEY); } catch {}
+    setBackupCheckTick(n => n + 1);
   }
 
   // ── 復元（JSON読み込み）──
@@ -5407,6 +5460,7 @@ function NagiChat() {
       setSettingsFromNotice(false);
       setStorageCheckTick(n => n + 1);
       showMemoryToast("復元しました");
+      markBackedUp();
       if (lostMode) setInitialized(true);
       console.log("[BACKUP] Restored successfully");
     } catch (err) {
@@ -5438,6 +5492,20 @@ function NagiChat() {
     if (!inChat) setSettingsFromNotice(true);
     setShowSettings(true);
   };
+  // バックアップの催促：保存失敗の帯・置き場の予告が出ているときは出さない
+  const nudgeDismissedAt = (() => { const v = backupStatus ? sGet(BACKUP_NUDGE_DISMISSED_KEY) : null; return typeof v === "number" ? v : null; })();
+  const showBackupNudge = inChat && !saveFailure && !showStorageWarn && !!backupStatus && backupStatus.rounds >= BACKUP_NUDGE_ROUNDS
+    && (nudgeDismissedAt === null || backupStatus.rounds >= nudgeDismissedAt + BACKUP_NUDGE_ROUNDS);
+  const dismissBackupNudge = () => { sSet(BACKUP_NUDGE_DISMISSED_KEY, backupStatus.rounds); setBackupCheckTick(n => n + 1); };
+  const backupNudge = showBackupNudge ? (
+    <div style={{ flexShrink:0,padding:"6px 8px 6px 14px",background:theme.headerBg,borderBottom:`1px solid ${theme.accent}20`,backdropFilter:"blur(16px)",display:"flex",alignItems:"center",gap:"8px",fontFamily:FONT }}>
+      <div style={{ flex:1,minWidth:0,fontSize:"11px",color:theme.accentLight,lineHeight:1.5 }}>バックアップしていない会話が {backupStatus.rounds}往復あります</div>
+      <button onClick={handleBackup} style={{ flexShrink:0,padding:"5px 10px",borderRadius:"10px",border:`1px solid ${theme.accent}40`,background:`${theme.accent}14`,color:theme.accentLight,fontSize:"11px",cursor:"pointer",fontFamily:FONT,fontWeight:600,whiteSpace:"nowrap" }}>バックアップする</button>
+      <button aria-label="閉じる" onClick={dismissBackupNudge} style={{ flexShrink:0,background:"none",border:"none",cursor:"pointer",padding:"4px",display:"flex" }}>
+        <XIcon color="#71717a" size={14} />
+      </button>
+    </div>
+  ) : null;
   const storageNotices = (saveFailure || showStorageWarn) ? (
     <div style={{ flexShrink:0,display:"flex",flexDirection:"column" }}>
       {saveFailure && (
@@ -5465,7 +5533,7 @@ function NagiChat() {
       )}
     </div>
   ) : null;
-  const settingsPanel = showSettings ? <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); setSettingsFromNotice(false); }} onClose={() => { if (settings.apiKey) { setShowSettings(false); setSettingsFromNotice(false); } }} theme={theme} onBackup={handleBackup} onRestore={handleRestore} conversations={conversations} convStore={convStore} onLegacyRemoved={() => setStorageCheckTick(n => n + 1)} /> : null;
+  const settingsPanel = showSettings ? <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); setSettingsFromNotice(false); }} onClose={() => { if (settings.apiKey) { setShowSettings(false); setSettingsFromNotice(false); } }} theme={theme} onBackup={handleBackup} onRestore={handleRestore} conversations={conversations} convStore={convStore} backupStatus={backupStatus} onLegacyRemoved={() => setStorageCheckTick(n => n + 1)} /> : null;
   const restoreConfirmDialog = restoreConfirm ? (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
           <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5)`,textAlign:"center" }}>
@@ -5624,6 +5692,7 @@ function NagiChat() {
 
       {/* Header */}
       {storageNotices}
+      {backupNudge}
       <div ref={headerRef} style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
         <div style={{ display:"flex",alignItems:"center",gap:"12px",minWidth:0,flex:1,paddingBottom:headerExtraPad }}>
           <button onClick={() => setSidebarOpen(true)} style={{ background:"none",border:"none",cursor:"pointer",padding:"3px",display:"flex",alignItems:"center",flexShrink:0 }}
