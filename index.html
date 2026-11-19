@@ -825,7 +825,87 @@ function summaryUsageCost(e) {
 }
 
 function sGet(k) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } }
-function sSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) { console.error("Storage:", e); } }
+function isQuotaError(e) {
+  return !!e && (e.name === "QuotaExceededError" || e.name === "NS_ERROR_DOM_QUOTA_REACHED" || e.code === 22);
+}
+// 書き込みだけ行い、結果を返す（保存失敗の通知はしない）
+function sWrite(k, v) {
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+    return { ok: true };
+  } catch (e) {
+    console.error("Storage:", e);
+    return { ok: false, quota: isQuotaError(e), message: String((e && e.message) || e) };
+  }
+}
+// 保存結果の受け取り先（Appが登録する）。失敗はここを通じて画面に知らせる
+let storageResultListener = null;
+function sSet(k, v) {
+  const result = sWrite(k, v);
+  if (storageResultListener) storageResultListener(k, result);
+  return result;
+}
+
+// ── 置き場（localStorage）の使用量：キーと値の文字数の合計で見積もる ──
+const STORAGE_LIMIT_CHARS = 5242880; // 目安（Chrome系の上限10MBをUTF-16の文字数に換算）
+const STORAGE_CHARS_PER_MB = 1048576;
+function measureStorage() {
+  const usage = { total: 0, nagi: 0, others: 0, parts: { convos: 0, chars: 0, rooms: 0, pendingMemories: 0, other: 0 } };
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k === null) continue;
+      const n = k.length + (localStorage.getItem(k) || "").length;
+      usage.total += n;
+      if (!k.startsWith("nagichat-")) { usage.others += n; continue; }
+      usage.nagi += n;
+      if (k === SK.convos) usage.parts.convos += n;
+      else if (k === SK.chars) usage.parts.chars += n;
+      else if (k === SK.rooms) usage.parts.rooms += n;
+      else if (k === SK.pendingMemories) usage.parts.pendingMemories += n;
+      else usage.parts.other += n;
+    }
+  } catch (e) {
+    console.error("Storage measure:", e);
+    return null;
+  }
+  usage.percent = usage.total / STORAGE_LIMIT_CHARS * 100;
+  return usage;
+}
+function formatStorageMB(chars) {
+  return (chars / STORAGE_CHARS_PER_MB).toFixed(1);
+}
+// 内訳用：0.1MB未満はKBで出す
+function formatStorageSize(chars) {
+  if (chars >= STORAGE_CHARS_PER_MB / 10) return "約 " + formatStorageMB(chars) + "MB";
+  return "約 " + Math.ceil(chars / 1024) + "KB";
+}
+
+// 会話を保存用に軽量化する（API用の重いデータを落とし、添付テキストを切り詰める）
+function toLightConvos(conversations) {
+  return conversations.map(c => ({
+    ...c,
+    messages: (c.messages || []).map(m => {
+      const light = { ...m };
+      if (light.images) {
+        light.images = light.images.map(img => ({ preview: img.preview, type: img.type }));
+      }
+      if (light.generatedImages) {
+        light.generatedImages = light.generatedImages.map(img => ({ preview: img.preview, url: img.url || null, ...(img.prompt ? { prompt: img.prompt } : {}), ...(img.caption ? { caption: img.caption } : {}) }));
+      }
+      if (light.files) {
+        light.files = light.files.map(f => ({
+          name: f.name, size: f.size,
+          text: f.text.length > 1000 ? f.text.slice(0, 1000) + "…（以下省略）" : f.text,
+        }));
+      }
+      delete light.apiContent;
+      delete light.apiMessages;
+      if (light.usage) { const { raw, ...rest } = light.usage; light.usage = rest; }
+      return light;
+    })
+  }));
+}
 
 // ── 戻るボタン連携（オーバーレイ1枚につき履歴を1枚積み、戻るで一番手前を閉じる）──
 // 開いているオーバーレイの数と、積んだ履歴の枚数が一致するように同期する。
@@ -2333,6 +2413,7 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
   const up = (k, v) => setS(prev => ({ ...prev, [k]: v }));
   const t = theme || THEMES.nagi;
   const restoreRef = useRef(null);
+  const [usage] = useState(() => measureStorage()); // 開いたときに1回だけ測る
   const MODEL_GROUPS = [
     { label: "Fable", models: MODELS.filter(m => m.id.includes("fable")) },
     { label: "Opus", models: MODELS.filter(m => m.id.includes("opus")) },
@@ -2500,12 +2581,58 @@ function SettingsPanel({ settings, onSave, onClose, theme, onBackup, onRestore }
           <input ref={restoreRef} type="file" accept=".json" onChange={e => { if (e.target.files?.[0]) onRestore(e.target.files[0]); e.target.value=""; }} style={{ display:"none" }} />
         </div>
         <div style={{ fontSize:"9px",color:"#3f3f46",marginTop:"6px",fontFamily:FONT }}>全会話・設定・記憶をJSONで書き出し／読み込み</div>
+        <StorageUsageMeter usage={usage} theme={t} />
 
         <div style={{ display:"flex",gap:"8px",marginTop:"24px" }}>
           <button onClick={onClose} style={btnSec}>キャンセル</button>
           <button onClick={() => onSave(s)} style={btnPri}>保存</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══ 置き場の使用量（設定パネル内）═══
+function StorageUsageMeter({ usage, theme }) {
+  const t = theme || THEMES.nagi;
+  const rowStyle = { display:"flex",justifyContent:"space-between",gap:"8px",fontSize:"11px",fontFamily:FONT,lineHeight:1.7 };
+  const mb = formatStorageSize;
+  const pct = n => usage && usage.total > 0 ? Math.round(n / usage.total * 100) + "%" : "0%";
+  return (
+    <div>
+      <label style={{...labelStyle,marginTop:"18px"}}>置き場の使用量（目安）</label>
+      {!usage ? (
+        <div style={{ fontSize:"11px",color:"#71717a",fontFamily:FONT }}>使用量を読み取れませんでした</div>
+      ) : (() => {
+        const p = usage.percent;
+        const barColor = p > 90 ? "#f87171" : p > 80 ? "#fbbf24" : t.accent;
+        const parts = [
+          ["会話", usage.parts.convos],
+          ["キャラ", usage.parts.chars],
+          ["部屋", usage.parts.rooms],
+          ["保留中の記憶", usage.parts.pendingMemories],
+          ["その他", usage.parts.other],
+        ];
+        return (
+          <div style={{ padding:"12px 14px",borderRadius:"14px",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize:"13px",color:"#d4d4d8",fontFamily:FONT,fontWeight:600 }}>
+              約 {formatStorageMB(usage.total)}MB 相当 / 目安 5MB（{p.toFixed(1)}%）
+            </div>
+            <div style={{ height:"4px",borderRadius:"2px",background:"rgba(255,255,255,0.08)",marginTop:"8px",overflow:"hidden" }}>
+              <div style={{ width:Math.min(100, p) + "%",height:"100%",borderRadius:"2px",background:barColor }} />
+            </div>
+            <div style={{ marginTop:"10px" }}>
+              <div style={{ ...rowStyle,color:"#a1a1aa" }}><span>nagiChat</span><span>{mb(usage.nagi)}（{pct(usage.nagi)}）</span></div>
+              {parts.map(([label, n]) => (
+                <div key={label} style={{ ...rowStyle,color:"#71717a",paddingLeft:"12px" }}><span>{label}</span><span>{mb(n)}</span></div>
+              ))}
+              <div style={{ ...rowStyle,color:"#a1a1aa" }}><span>それ以外（同じ置き場の他のアプリ）</span><span>{mb(usage.others)}（{pct(usage.others)}）</span></div>
+            </div>
+            <div style={{ fontSize:"10px",color:"#71717a",fontFamily:FONT,marginTop:"8px",lineHeight:1.5 }}>同じ場所に置いた他のアプリ（栞など）と、この容量を分け合っています</div>
+            <div style={{ fontSize:"9px",color:"#52525b",fontFamily:FONT,marginTop:"2px",lineHeight:1.5 }}>キーと値の文字数の合計から出した目安です。実際の上限はブラウザによって違います</div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -3156,6 +3283,12 @@ function NagiChat() {
   const [showPendingBox, setShowPendingBox] = useState(false);
   const [showThreadInfo, setShowThreadInfo] = useState(false);
   const [memoryToast, setMemoryToast] = useState(null); // { key, text }
+  const [saveFailures, setSaveFailures] = useState({}); // 保存に失敗したままのキー { [key]: { quota, message } }
+  const [storageUsage, setStorageUsage] = useState(null); // 起動時・会話を開いたとき・復元の後に測った使用量
+  const [storageCheckTick, setStorageCheckTick] = useState(0);
+  const [storageWarn80Dismissed, setStorageWarn80Dismissed] = useState(false); // この起動中は出さない
+  const [storageWarn90Dismissed, setStorageWarn90Dismissed] = useState(false); // 次に会話を開くまで出さない
+  const [settingsFromNotice, setSettingsFromNotice] = useState(false); // トップ・部屋選択の画面から設定を開いた
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const sendingRef = useRef(false);
@@ -3224,6 +3357,21 @@ function NagiChat() {
     return () => ro.disconnect();
   }, [screen, activeChar.name]);
 
+  // 保存の結果を受け取り、失敗したキーを控える。そのキーの保存が次に成功したら外す
+  useEffect(() => {
+    storageResultListener = (key, result) => {
+      setSaveFailures(prev => {
+        if (result.ok) {
+          if (!prev[key]) return prev;
+          const { [key]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [key]: { quota: !!result.quota, message: result.message || "" } };
+      });
+    };
+    return () => { storageResultListener = null; };
+  }, []);
+
   useEffect(() => {
     const sc = sGet(SK.convos), ss = sGet(SK.settings), sch = sGet(SK.chars), sp = sGet(SK.profile);
     let sr = sGet(SK.rooms);
@@ -3260,34 +3408,19 @@ function NagiChat() {
 
   useEffect(() => {
     if (!initialized) return;
-    const lightConvos = conversations.map(c => ({
-      ...c,
-      messages: (c.messages || []).map(m => {
-        const light = { ...m };
-        if (light.images) {
-          light.images = light.images.map(img => ({ preview: img.preview, type: img.type }));
-        }
-        if (light.generatedImages) {
-          light.generatedImages = light.generatedImages.map(img => ({ preview: img.preview, url: img.url || null, ...(img.prompt ? { prompt: img.prompt } : {}), ...(img.caption ? { caption: img.caption } : {}) }));
-        }
-        if (light.files) {
-          light.files = light.files.map(f => ({
-            name: f.name, size: f.size,
-            text: f.text.length > 1000 ? f.text.slice(0, 1000) + "…（以下省略）" : f.text,
-          }));
-        }
-        delete light.apiContent;
-        delete light.apiMessages;
-        if (light.usage) { const { raw, ...rest } = light.usage; light.usage = rest; }
-        return light;
-      })
-    }));
+    const lightConvos = toLightConvos(conversations);
     sSet(SK.convos, lightConvos);
   }, [conversations, initialized]);
   useEffect(() => { if (initialized) sSet(SK.chars, characters); }, [characters, initialized]);
   useEffect(() => { if (initialized) sSet(SK.profile, userProfile); }, [userProfile, initialized]);
   useEffect(() => { if (initialized) sSet(SK.rooms, rooms); }, [rooms, initialized]);
   useEffect(() => { if (initialized) sSet(SK.pendingMemories, pendingMemories); }, [pendingMemories, initialized]);
+  // 使用量は起動時・会話を開いたとき・復元の後に測る（保存のたびには測らない）。上の保存より後に置くこと
+  const openedConvKey = screen === "chat" ? activeConvId : null; // チャット画面で開いている会話
+  useEffect(() => {
+    if (initialized) setStorageUsage(measureStorage());
+  }, [openedConvKey, initialized, storageCheckTick]);
+  useEffect(() => { if (openedConvKey) setStorageWarn90Dismissed(false); }, [openedConvKey]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior:"smooth" }); }, [conversations, loading]);
 
   // ── スレッドごとにモデルを復元（プレーンさんの新規スレは部屋のデフォルトモデルにフォールバック）──
@@ -4589,11 +4722,15 @@ function NagiChat() {
 
   // ── バックアップ（全データJSON書き出し）──
   async function handleBackup() {
-    const data = {};
-    Object.values(SK).forEach(key => {
-      const val = sGet(key);
-      if (val !== null) data[key] = val;
-    });
+    // 置き場から読み直さず、いま画面にある状態から作る（保存に失敗した内容も書き出せるように）
+    const data = {
+      [SK.convos]: toLightConvos(conversations),
+      [SK.settings]: settings,
+      [SK.chars]: characters,
+      [SK.profile]: userProfile,
+      [SK.rooms]: rooms,
+      [SK.pendingMemories]: pendingMemories,
+    };
     const dateStr = new Date().toISOString().slice(0, 10);
     const fileName = "nagichat-backup-" + dateStr + ".json";
     const json = JSON.stringify(data, null, 2);
@@ -4629,14 +4766,55 @@ function NagiChat() {
     reader.readAsText(file);
   }
 
+  // 復元前に控えた値（生の文字列）へ書き戻す。書き戻しに失敗したキーは保存失敗として知らせる
+  function rollbackStorage(original) {
+    const keys = Object.keys(original);
+    keys.forEach(key => { try { localStorage.removeItem(key); } catch {} });
+    let ok = true;
+    keys.forEach(key => {
+      if (original[key] === null) return;
+      let result;
+      try {
+        localStorage.setItem(key, original[key]);
+        result = { ok: true };
+      } catch (e) {
+        console.error("Storage rollback:", e);
+        result = { ok: false, quota: isQuotaError(e), message: String((e && e.message) || e) };
+        ok = false;
+      }
+      if (storageResultListener) storageResultListener(key, result);
+    });
+    return ok;
+  }
+
   function confirmRestore() {
     const data = restoreConfirm;
     setRestoreConfirm(null);
+    const keys = Object.values(SK);
+    const original = {};
+    keys.forEach(key => { original[key] = localStorage.getItem(key); });
+    let failure = null;
+    const written = [];
+    for (const key of keys) {
+      if (data[key] !== undefined) {
+        const result = sWrite(key, data[key]);
+        if (!result.ok) { failure = result; break; }
+        written.push(key);
+      } else {
+        localStorage.removeItem(key);
+      }
+    }
+    if (failure) {
+      const rolledBack = rollbackStorage(original);
+      setStorageCheckTick(n => n + 1);
+      const reason = failure.quota ? "置き場がいっぱいです" : failure.message;
+      alert(rolledBack
+        ? "復元できませんでした（" + reason + "）。データは復元前の状態のままです。"
+        : "復元できませんでした（" + reason + "）。元のデータへの書き戻しにも失敗しました。いま見えている内容をバックアップで書き出してください。");
+      return;
+    }
+    if (storageResultListener) written.forEach(key => storageResultListener(key, { ok: true }));
     try {
-      Object.values(SK).forEach(key => {
-        if (data[key] !== undefined) sSet(key, data[key]);
-        else localStorage.removeItem(key);
-      });
       // 状態を再読み込み
       if (data[SK.settings]) setSettings(prev => ({ ...prev, ...data[SK.settings] }));
       if (data[SK.convos]) {
@@ -4652,6 +4830,9 @@ function NagiChat() {
       if (data[SK.rooms]?.length > 0) setRooms(data[SK.rooms]);
       setPendingMemories(Array.isArray(data[SK.pendingMemories]) ? data[SK.pendingMemories] : []);
       setShowSettings(false);
+      setSettingsFromNotice(false);
+      setStorageCheckTick(n => n + 1);
+      showMemoryToast("復元しました");
       console.log("[BACKUP] Restored successfully");
     } catch (err) {
       alert("復元中にエラーが発生しました: " + err.message);
@@ -4662,7 +4843,7 @@ function NagiChat() {
 
   // チャット画面に直接書かれているオーバーレイ（コンポーネント化されているものは各自で登録）
   const inChat = screen === "chat";
-  useOverlayHistory(inChat && !!restoreConfirm, () => setRestoreConfirm(null), "restoreConfirm");
+  useOverlayHistory(!!restoreConfirm, () => setRestoreConfirm(null), "restoreConfirm");
   useOverlayHistory(inChat && showPromptChoice, () => setShowPromptChoice(false), "promptChoice");
   const [confirmDiscardMemory, setConfirmDiscardMemory] = useState(false);
   const closeMemory = () => { setShowMemory(false); setEditingMemory(false); };
@@ -4670,15 +4851,45 @@ function NagiChat() {
   const requestCloseMemory = () => memoryDirty ? setConfirmDiscardMemory(true) : closeMemory();
   useOverlayHistory(inChat && showMemory, requestCloseMemory, "memory");
 
-  if (screen === "top") return <TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} conversations={conversations} />;
-  if (screen === "rooms") return <RoomSelect rooms={rooms} conversations={conversations} onEnter={enterRoom} onSaveRoom={handleSaveRoom} onDeleteRoom={handleDeleteRoom} onBack={() => setScreen("top")} />;
-
-  return (
-    <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.pattern ? theme.pattern + " repeat, " + theme.bg : theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
-      <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} room={activeRoom} onSwitchRoom={() => { setSidebarOpen(false); setScreen("rooms"); }} />
-
-      {showSettings && <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); }} onClose={() => settings.apiKey ? setShowSettings(false) : null} theme={theme} onBackup={handleBackup} onRestore={handleRestore} />}
-      {restoreConfirm && (
+  // ── 保存失敗の帯・使用量の予告 ──
+  const failureList = Object.values(saveFailures);
+  const saveFailure = failureList.find(f => f.quota) || failureList[0] || null;
+  const usagePercent = storageUsage ? storageUsage.percent : 0;
+  const storageWarnLevel = usagePercent > 90 ? 90 : usagePercent > 80 ? 80 : 0;
+  const showStorageWarn = storageWarnLevel === 90 ? !storageWarn90Dismissed : storageWarnLevel === 80 ? !storageWarn80Dismissed : false;
+  const openSettingsFromNotice = () => {
+    if (!inChat) setSettingsFromNotice(true);
+    setShowSettings(true);
+  };
+  const storageNotices = (saveFailure || showStorageWarn) ? (
+    <div style={{ flexShrink:0,display:"flex",flexDirection:"column" }}>
+      {saveFailure && (
+        <div role="alert" style={{ padding:"9px 14px",background:"rgba(127,29,29,0.55)",borderBottom:"1px solid rgba(248,113,113,0.35)",backdropFilter:"blur(16px)",display:"flex",alignItems:"center",gap:"10px",fontFamily:FONT }}>
+          <div style={{ flex:1,minWidth:0 }}>
+            <div style={{ fontSize:"12px",color:"#fecaca",lineHeight:1.55 }}>
+              {saveFailure.quota
+                ? "保存できませんでした。置き場がいっぱいです。いま見えている内容は、開き直すと消えます。設定からバックアップを書き出してください。"
+                : "保存できませんでした。いま見えている内容は、開き直すと消えるかもしれません。"}
+            </div>
+            {!saveFailure.quota && saveFailure.message && <div style={{ fontSize:"10px",color:"#fca5a5",opacity:0.75,marginTop:"2px",wordBreak:"break-all" }}>{saveFailure.message}</div>}
+          </div>
+          <button onClick={openSettingsFromNotice} style={{ flexShrink:0,padding:"6px 10px",borderRadius:"10px",border:`1px solid ${theme.accent}40`,background:`${theme.accent}14`,color:theme.accentLight,fontSize:"11px",cursor:"pointer",fontFamily:FONT,fontWeight:600,whiteSpace:"nowrap" }}>設定を開く</button>
+        </div>
+      )}
+      {showStorageWarn && (
+        <div style={{ padding:"6px 8px 6px 14px",background:theme.headerBg,borderBottom:`1px solid ${storageWarnLevel === 90 ? "rgba(248,113,113,0.3)" : "rgba(251,191,36,0.25)"}`,backdropFilter:"blur(16px)",display:"flex",alignItems:"center",gap:"6px",fontFamily:FONT }}>
+          <div onClick={openSettingsFromNotice} style={{ flex:1,minWidth:0,fontSize:"11px",color:storageWarnLevel === 90 ? "#fca5a5" : "#fcd34d",lineHeight:1.5,cursor:"pointer" }}>
+            {storageWarnLevel === 90 ? "置き場がほぼいっぱいです" : "置き場が残り少なくなっています"}（{Math.floor(usagePercent)}%）。設定からバックアップを書き出して、古い会話を整理してください。
+          </div>
+          <button aria-label="閉じる" onClick={() => storageWarnLevel === 90 ? setStorageWarn90Dismissed(true) : setStorageWarn80Dismissed(true)} style={{ flexShrink:0,background:"none",border:"none",cursor:"pointer",padding:"4px",display:"flex" }}>
+            <XIcon color="#71717a" size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  ) : null;
+  const settingsPanel = showSettings ? <SettingsPanel settings={settings} onSave={s => { setSettings(s); sSet(SK.settings,s); setShowSettings(false); setSettingsFromNotice(false); }} onClose={() => { if (settings.apiKey) { setShowSettings(false); setSettingsFromNotice(false); } }} theme={theme} onBackup={handleBackup} onRestore={handleRestore} /> : null;
+  const restoreConfirmDialog = restoreConfirm ? (
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,animation:"fadeIn 0.15s ease-out" }}>
           <div style={{ background:"#1c1c22",borderRadius:"24px",padding:"28px 24px",width:"min(340px, 85vw)",border:`1px solid ${theme.accent}20`,boxShadow:`0 20px 60px rgba(0,0,0,0.5)`,textAlign:"center" }}>
             <div style={{ display:"flex",justifyContent:"center",marginBottom:"14px" }}><InboxIcon color={theme.accentLight} size={32} /></div>
@@ -4690,7 +4901,25 @@ function NagiChat() {
             </div>
           </div>
         </div>
-      )}
+  ) : null;
+  // トップ・部屋選択の画面では、帯を上に重ねて出す（設定はそこから開いたときだけ出す）
+  const outsideChatOverlays = (
+    <>
+      {storageNotices && <div style={{ position:"fixed",top:0,left:0,right:0,zIndex:90 }}>{storageNotices}</div>}
+      {settingsFromNotice && settingsPanel}
+      {restoreConfirmDialog}
+    </>
+  );
+
+  if (screen === "top") return <><TopPage characters={characters} onSelect={id => handleSwitchChar(id, true)} conversations={conversations} />{outsideChatOverlays}</>;
+  if (screen === "rooms") return <><RoomSelect rooms={rooms} conversations={conversations} onEnter={enterRoom} onSaveRoom={handleSaveRoom} onDeleteRoom={handleDeleteRoom} onBack={() => setScreen("top")} />{outsideChatOverlays}</>;
+
+  return (
+    <div style={{ height:"100vh",width:"100vw",display:"flex",flexDirection:"column",background:theme.pattern ? theme.pattern + " repeat, " + theme.bg : theme.bg,color:"#e4e4e7",fontFamily:FONT,position:"relative",overflow:"hidden",transition:"background 0.5s ease" }}>
+      <Sidebar conversations={charConvos} activeId={activeConvId} activeChar={activeChar} onSelect={setActiveConvId} onNew={handleNewConv} onDelete={handleDeleteConv} onExport={handleExport} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} theme={theme} room={activeRoom} onSwitchRoom={() => { setSidebarOpen(false); setScreen("rooms"); }} />
+
+      {settingsPanel}
+      {restoreConfirmDialog}
       {showPromptEditor === "char" && <PromptEditor prompt={activeChar.prompt} charName={activeCharId==="plain" ? "共通" : activeChar.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} lorebook={activeChar.lorebook || []} profileMode={activeChar.profileMode || "common"} customProfile={activeChar.customProfile || ""} memoryEnabled={!!activeChar.memoryEnabled} memories={activeChar.memories || []} memoryScope={activeChar.memoryScope || "char"} roomMemories={normalizeRoomMemories(activeChar.roomMemories)} rooms={activeCharId === "plain" ? rooms : null} onSave={(p, lb, pm, cp, me, mems, ms, rms) => { setCharacters(prev => prev.map(c => c.id===activeCharId?{...c,prompt:p,lorebook:lb,profileMode:pm,customProfile:cp,memoryEnabled:me,memories:mems,memoryScope:ms,roomMemories:rms}:c)); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showPromptEditor === "room" && activeRoom && <PromptEditor prompt={activeRoom.roomPrompt} charName={activeRoom.name} charIcon={activeChar.icon} charAvatar={activeChar.avatar} onSave={p => { handleSaveRoom(activeRoom, { roomPrompt:p }); setShowPromptEditor(false); }} onClose={() => setShowPromptEditor(false)} theme={theme} />}
       {showPromptChoice && (
@@ -4790,6 +5019,7 @@ function NagiChat() {
       {confirmDiscardMemory && <DiscardConfirmDialog theme={theme} onCancel={() => setConfirmDiscardMemory(false)} onConfirm={() => { setConfirmDiscardMemory(false); closeMemory(); }} />}
 
       {/* Header */}
+      {storageNotices}
       <div ref={headerRef} style={{ padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${theme.accent}10`,background:theme.headerBg,backdropFilter:"blur(16px)",flexShrink:0 }}>
         <div style={{ display:"flex",alignItems:"center",gap:"12px",minWidth:0,flex:1,paddingBottom:headerExtraPad }}>
           <button onClick={() => setSidebarOpen(true)} style={{ background:"none",border:"none",cursor:"pointer",padding:"3px",display:"flex",alignItems:"center",flexShrink:0 }}
